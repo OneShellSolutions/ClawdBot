@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
+import secrets
+import time
 from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import FileResponse
 
@@ -44,17 +48,113 @@ app.add_middleware(
 )
 
 
-# --- API Key Auth ---
+# --- Auth ---
 
 API_KEY = os.environ.get("DEVOPS_API_KEY", "")
+DASHBOARD_USER = os.environ.get("DASHBOARD_USER", "admin")
+DASHBOARD_PASS = os.environ.get("DASHBOARD_PASS", "")
+SESSION_SECRET = os.environ.get("SESSION_SECRET", secrets.token_hex(32))
+SESSION_MAX_AGE = 86400 * 7  # 7 days
+
+
+def _sign_session(data: str) -> str:
+    sig = hmac.new(SESSION_SECRET.encode(), data.encode(), hashlib.sha256).hexdigest()[:16]
+    return f"{data}.{sig}"
+
+
+def _verify_session(token: str) -> str | None:
+    if "." not in token:
+        return None
+    data, sig = token.rsplit(".", 1)
+    expected = hmac.new(SESSION_SECRET.encode(), data.encode(), hashlib.sha256).hexdigest()[:16]
+    if not hmac.compare_digest(sig, expected):
+        return None
+    try:
+        parts = data.split("|")
+        if len(parts) == 2 and float(parts[1]) > time.time():
+            return parts[0]
+    except (ValueError, IndexError):
+        pass
+    return None
+
+
+def _is_authenticated(request: Request) -> bool:
+    if not DASHBOARD_PASS:
+        return True  # No password = open access
+    token = request.cookies.get("session", "")
+    return _verify_session(token) is not None
+
+
+async def require_auth(request: Request):
+    if not _is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
 
 async def verify_api_key(request: Request):
-    if not API_KEY:
-        return  # No key configured = open access
-    key = request.headers.get("X-API-Key", "") or request.query_params.get("api_key", "")
-    if key != API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+    # Check session cookie first (browser), then API key (programmatic)
+    if _is_authenticated(request):
+        return
+    if API_KEY:
+        key = request.headers.get("X-API-Key", "") or request.query_params.get("api_key", "")
+        if key == API_KEY:
+            return
+    if not DASHBOARD_PASS and not API_KEY:
+        return  # No auth configured = open access
+    raise HTTPException(status_code=401, detail="Not authenticated")
+
+
+# --- Login ---
+
+LOGIN_HTML = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Login - AiDevOps</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0e1a;color:#e0e0e0;font-family:system-ui;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.login{background:#111827;border:1px solid #1e293b;border-radius:12px;padding:40px;width:360px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+h1{font-size:24px;margin-bottom:8px;text-align:center}
+.sub{color:#8b8fa3;font-size:13px;text-align:center;margin-bottom:24px}
+label{display:block;font-size:13px;color:#8b8fa3;margin-bottom:4px}
+input{width:100%;padding:10px 12px;background:#0a0e1a;border:1px solid #1e293b;border-radius:6px;color:#e0e0e0;font-size:14px;margin-bottom:16px;outline:none}
+input:focus{border-color:#3b82f6}
+button{width:100%;padding:10px;background:#3b82f6;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer}
+button:hover{background:#2563eb}
+.error{color:#ef4444;font-size:13px;text-align:center;margin-bottom:12px}
+</style></head><body>
+<div class="login">
+<h1>AiDevOps</h1>
+<div class="sub">OneShell Infrastructure Monitor</div>
+<div class="error" id="err"></div>
+<form method="POST" action="/login">
+<label>Username</label><input name="username" required autofocus>
+<label>Password</label><input name="password" type="password" required>
+<button type="submit">Sign In</button>
+</form></div></body></html>"""
+
+
+@app.get("/login")
+async def login_page(request: Request):
+    if _is_authenticated(request):
+        return RedirectResponse("/", status_code=302)
+    return HTMLResponse(LOGIN_HTML)
+
+
+@app.post("/login")
+async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
+    if username == DASHBOARD_USER and password == DASHBOARD_PASS:
+        expires = time.time() + SESSION_MAX_AGE
+        token = _sign_session(f"{username}|{expires}")
+        response = RedirectResponse("/", status_code=302)
+        response.set_cookie("session", token, max_age=SESSION_MAX_AGE, httponly=True, samesite="lax")
+        return response
+    return HTMLResponse(LOGIN_HTML.replace('id="err"', 'id="err" style="display:block"') .replace('</div>\n<form', 'Invalid username or password</div>\n<form'), status_code=401)
+
+
+@app.get("/logout")
+async def logout():
+    response = RedirectResponse("/login", status_code=302)
+    response.delete_cookie("session")
+    return response
 
 
 # --- Health ---
@@ -765,5 +865,7 @@ if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     @app.get("/")
-    async def serve_dashboard():
+    async def serve_dashboard(request: Request):
+        if not _is_authenticated(request):
+            return RedirectResponse("/login", status_code=302)
         return FileResponse(os.path.join(static_dir, "index.html"))

@@ -22,6 +22,7 @@
                   x-text="(overview.health_score?.overall ?? '--') + '%'"></span>
             <span class="ws-status" :class="wsConnected ? 'connected' : 'disconnected'"
                   x-text="wsConnected ? 'Live' : 'Offline'"></span>
+            <a href="/logout" style="margin-left:12px;color:#8b8fa3;font-size:12px;text-decoration:none;opacity:0.7" title="Sign out">Logout</a>
         </div>
     </header>
 
