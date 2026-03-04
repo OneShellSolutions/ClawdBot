@@ -135,6 +135,16 @@ select {
 .btn-sm { padding: 4px 10px; font-size: 12px; }
 .btn-danger { background: var(--critical); }
 
+.pulse-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--healthy); margin-right: 6px;
+    animation: pulse-glow 1.5s ease-in-out infinite;
+}
+@keyframes pulse-glow {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
 .pattern-match {
     padding: 10px; border-radius: 6px; margin-bottom: 8px; border-left: 3px solid var(--border);
 }

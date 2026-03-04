@@ -50,6 +50,10 @@ document.addEventListener('alpine:init', () => {
         aiFixService: '',
         aiFixResult: null,
         aiFixLoading: false,
+        aiFixLog: [],
+        aiFixTaskId: null,
+        aiFixEventSource: null,
+        aiFixMsg: '',
 
         // NATS actions
         natsActionResult: '',
@@ -253,64 +257,84 @@ document.addEventListener('alpine:init', () => {
 
         async diagnoseIssue(issue) {
             issue._fixing = true;
-            issue._fixProgress = ['Claude AI is investigating... (this may take a few minutes)'];
+            issue._fixProgress = [];
             issue._fixResult = null;
             issue._agentLog = [];
             issue._executing = false;
+            issue._aiTaskId = null;
+            issue._aiMsg = '';
 
-            const data = await this.api('/api/v1/issues/fix-one', {
+            // Start streaming AI task
+            const data = await this.api('/api/v1/ai/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ issue: issue.detail, service: issue.service, source: issue.source }),
+                body: JSON.stringify({ issue: issue.detail, service: issue.service, auto_fix: true }),
             });
 
-            if (data) {
-                issue._fixResult = data;
-                issue._fixProgress = [];
-                if (data.duration_ms) issue._fixProgress.push('Completed in ' + (data.duration_ms / 1000).toFixed(1) + 's');
-            } else {
-                issue._fixProgress.push('ERROR: Failed to get AI response');
+            if (!data?.task_id) {
+                issue._fixProgress.push('ERROR: Failed to start AI investigation');
+                issue._fixing = false;
+                return;
             }
-            issue._fixing = false;
+
+            issue._aiTaskId = data.task_id;
+            this._streamAiEvents(issue, data.task_id);
         },
 
-        async executePlan(issue, useAgent) {
-            if (useAgent) {
-                if (!confirm('AI Agent will autonomously investigate and fix this issue. Proceed?')) return;
-            } else {
-                if (!confirm('Execute all ' + (issue._fixResult?.steps?.length || 0) + ' steps?')) return;
-            }
-            issue._executing = true;
-            issue._agentLog = [];
-            issue._fixProgress = [useAgent ? 'AI Agent investigating and fixing... (may take several minutes)' : 'Executing plan...'];
+        _streamAiEvents(issue, taskId) {
+            const evtSource = new EventSource(`/api/v1/ai/stream/${taskId}`);
+            issue._aiEventSource = evtSource;
 
-            const data = await this.api('/api/v1/issues/execute-plan', {
+            evtSource.onmessage = (event) => {
+                try {
+                    const evt = JSON.parse(event.data);
+                    if (evt.type === 'done') {
+                        issue._fixing = false;
+                        issue._fixResult = { diagnosis: evt.final_output || '' };
+                        issue._fixProgress.push(`Complete (${(evt.duration_ms / 1000).toFixed(1)}s)`);
+                        evtSource.close();
+                        return;
+                    }
+                    issue._agentLog.push(evt);
+                    if (issue._agentLog.length > 200) issue._agentLog.splice(0, 50);
+                    // Auto-scroll log box
+                    this.$nextTick(() => {
+                        const boxes = document.querySelectorAll('[x-ref="logbox"]');
+                        boxes.forEach(b => { b.scrollTop = b.scrollHeight; });
+                    });
+                } catch (e) {
+                    console.error('SSE parse error:', e);
+                }
+            };
+
+            evtSource.onerror = () => {
+                issue._fixing = false;
+                if (!issue._fixResult) {
+                    issue._fixProgress.push('Connection lost');
+                }
+                evtSource.close();
+            };
+        },
+
+        async stopAi(issue) {
+            if (!issue._aiTaskId) return;
+            await this.api(`/api/v1/ai/stop/${issue._aiTaskId}`, { method: 'POST' });
+            if (issue._aiEventSource) issue._aiEventSource.close();
+            issue._fixing = false;
+            issue._fixProgress.push('Stopped by user');
+        },
+
+        async sendAiMessage(issue) {
+            if (!issue._aiTaskId || !issue._aiMsg?.trim()) return;
+            const msg = issue._aiMsg;
+            issue._aiMsg = '';
+            issue._agentLog.push({ type: 'user', message: 'You: ' + msg });
+            await this.api(`/api/v1/ai/message/${issue._aiTaskId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    issue: issue.detail,
-                    service: issue.service,
-                    steps: issue._fixResult?.steps || [],
-                    use_agent: useAgent,
-                }),
+                body: JSON.stringify({ message: msg }),
             });
-
-            if (data) {
-                if (data.executed_steps) {
-                    if (!issue._fixResult) issue._fixResult = {};
-                    issue._fixResult.executed_steps = data.executed_steps;
-                }
-                if (data.agent_log) issue._agentLog = data.agent_log;
-                if (data.final_output) {
-                    if (!issue._fixResult) issue._fixResult = {};
-                    issue._fixResult.diagnosis = data.final_output;
-                }
-                if (data.duration_ms) issue._fixProgress.push('Completed in ' + (data.duration_ms / 1000).toFixed(1) + 's');
-                issue._fixProgress.push(data.status === 'done' ? 'Complete' : 'Finished with issues');
-            } else {
-                issue._fixProgress.push('ERROR: Execution failed');
-            }
-            issue._executing = false;
+            issue._fixing = true;
         },
 
         async runManualCmd(issue) {
@@ -370,7 +394,10 @@ document.addEventListener('alpine:init', () => {
             if (!this.aiFixError.trim()) return;
             if (autoExecute && !confirm('AI will investigate and apply safe fixes on production. Continue?')) return;
             this.aiFixLoading = true;
-            this.aiFixResult = { diagnosis: 'Claude AI is investigating... (this may take a few minutes)' };
+            this.aiFixResult = null;
+            this.aiFixLog = [];
+            this.aiFixMsg = '';
+
             const data = await this.api('/api/v1/analysis/ai-fix', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -380,8 +407,62 @@ document.addEventListener('alpine:init', () => {
                     auto_execute: autoExecute,
                 }),
             });
-            if (data) this.aiFixResult = data;
+
+            if (!data?.task_id) {
+                this.aiFixLoading = false;
+                this.aiFixLog.push({ type: 'error', message: 'Failed to start AI investigation' });
+                return;
+            }
+
+            this.aiFixTaskId = data.task_id;
+            // Open SSE stream
+            const evtSource = new EventSource(`/api/v1/ai/stream/${data.task_id}`);
+            this.aiFixEventSource = evtSource;
+
+            evtSource.onmessage = (event) => {
+                try {
+                    const evt = JSON.parse(event.data);
+                    if (evt.type === 'done') {
+                        this.aiFixLoading = false;
+                        this.aiFixResult = { diagnosis: evt.final_output || '' };
+                        evtSource.close();
+                        return;
+                    }
+                    this.aiFixLog.push(evt);
+                    if (this.aiFixLog.length > 200) this.aiFixLog.splice(0, 50);
+                } catch (e) {
+                    console.error('SSE parse error:', e);
+                }
+            };
+
+            evtSource.onerror = () => {
+                this.aiFixLoading = false;
+                if (!this.aiFixResult) {
+                    this.aiFixLog.push({ type: 'error', message: 'Connection lost' });
+                }
+                evtSource.close();
+            };
+        },
+
+        async stopAiFixPanel() {
+            if (this.aiFixTaskId) {
+                await this.api(`/api/v1/ai/stop/${this.aiFixTaskId}`, { method: 'POST' });
+            }
+            if (this.aiFixEventSource) this.aiFixEventSource.close();
             this.aiFixLoading = false;
+            this.aiFixLog.push({ type: 'status', message: 'Stopped by user' });
+        },
+
+        async sendAiFixMessage() {
+            if (!this.aiFixTaskId || !this.aiFixMsg?.trim()) return;
+            const msg = this.aiFixMsg;
+            this.aiFixMsg = '';
+            this.aiFixLog.push({ type: 'user', message: 'You: ' + msg });
+            await this.api(`/api/v1/ai/message/${this.aiFixTaskId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: msg }),
+            });
         },
 
         async loadRedpanda() {

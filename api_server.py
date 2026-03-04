@@ -396,76 +396,269 @@ _PROD_CONTEXT = (
 )
 
 
-@app.post("/api/v1/issues/fix-one", dependencies=[Depends(verify_api_key)])
-async def fix_one_issue(request: Request):
-    """Claude investigates the issue autonomously and reports findings."""
-    data = await request.json()
-    issue_text = data.get("issue", "")
-    service = data.get("service", "")
-    if not issue_text:
-        raise HTTPException(400, "Missing issue text")
-    prompt = (
+# --- Active AI tasks (streaming) ---
+_ai_tasks: dict[str, dict] = {}
+
+
+def _build_prompt(issue_text: str, service: str = "", auto_fix: bool = True) -> str:
+    """Build the Claude prompt for AI investigation."""
+    action = "INVESTIGATE AND FIX" if auto_fix else "DIAGNOSE"
+    fix_instructions = (
+        "Apply safe fixes directly (restart pods, clear sessions, scale up, etc.).\n"
+        "If it's a code bug, identify it, describe the fix needed, but do NOT commit/push.\n"
+        "Verify the fix worked after applying it.\n\n"
+        "Save a brief summary to /opt/clawdbot/.claude/projects/-opt-clawdbot/memory/incident-learnings.md"
+    ) if auto_fix else (
+        "Find the root cause and explain what's happening and how to fix it.\n"
+        "Be thorough in your investigation."
+    )
+    return (
         f"{_PROD_CONTEXT}\n\n"
         f"{'Service: ' + service + chr(10) if service else ''}"
         f"Issue: {issue_text}\n\n"
-        f"INVESTIGATE this issue on the PRODUCTION cluster. Use kubectl to:\n"
-        f"1. Check pod status, events, and recent logs\n"
-        f"2. Identify the root cause\n"
-        f"3. Apply safe fixes (restart pods, clear sessions, etc.) - do NOT modify source code without approval\n"
-        f"4. Verify the fix worked\n\n"
-        f"Be thorough. Use as many tool calls as needed. Report what you found and what you did.\n"
-        f"If you fixed something, confirm it's working now.\n"
-        f"If the issue requires code changes, describe what needs to change but don't commit.\n\n"
-        f"After investigation, save a brief summary of the issue and fix to "
-        f"/opt/clawdbot/.claude/projects/-opt-clawdbot/memory/incident-learnings.md "
-        f"(append to file, create if not exists) so future investigations can reference past fixes."
+        f"{action} this issue on the PRODUCTION cluster.\n"
+        f"Use kubectl to check pods, logs, events, MongoDB queries — whatever is needed.\n"
+        f"{fix_instructions}"
     )
-    start = time.time()
-    result = await _run_claude(prompt, timeout=None)
-    duration_ms = int((time.time() - start) * 1000)
-    return {
-        "status": "ok",
-        "diagnosis": result,
-        "steps": [],
-        "duration_ms": duration_ms,
+
+
+async def _start_claude_stream(task_id: str, prompt: str):
+    """Spawn claude CLI with stream-json output and collect events."""
+    cmd = [
+        "claude", "-p", "--output-format", "stream-json",
+        "--dangerously-skip-permissions",
+    ]
+    env = os.environ.copy()
+    env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("CLAUDECODE", None)
+
+    task = _ai_tasks[task_id]
+    def _ts():
+        return datetime.now().strftime("%H:%M:%S")
+
+    task["status"] = "running"
+    task["events"].append({"type": "status", "message": "Starting Claude AI...", "ts": _ts()})
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+            cwd="/opt/clawdbot",
+        )
+        task["process"] = proc
+        proc.stdin.write(prompt.encode())
+        await proc.stdin.drain()
+        proc.stdin.close()
+
+        # Read stdout line by line (stream-json outputs one JSON per line)
+        final_text_parts = []
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            line_str = line.decode("utf-8", errors="replace").strip()
+            if not line_str:
+                continue
+            try:
+                evt = json.loads(line_str)
+            except json.JSONDecodeError:
+                task["events"].append({"type": "text", "message": line_str, "ts": _ts()})
+                continue
+
+            etype = evt.get("type", "")
+
+            if etype == "assistant" and evt.get("subtype") == "text":
+                # Claude's text output
+                final_text_parts.append(evt.get("text", ""))
+                task["events"].append({
+                    "type": "text",
+                    "message": evt.get("text", ""),
+                    "ts": _ts(),
+                })
+            elif etype == "tool_use":
+                tool_name = evt.get("tool", evt.get("name", ""))
+                tool_input = evt.get("input", {})
+                desc = ""
+                if isinstance(tool_input, dict):
+                    desc = tool_input.get("description", tool_input.get("command", tool_input.get("pattern", "")))
+                    if not desc and tool_input.get("file_path"):
+                        desc = f"Reading {tool_input['file_path']}"
+                task["events"].append({
+                    "type": "tool_use",
+                    "tool": tool_name,
+                    "message": f"{tool_name}: {desc}" if desc else tool_name,
+                    "ts": _ts(),
+                })
+            elif etype == "tool_result":
+                content = evt.get("content", evt.get("output", ""))
+                if isinstance(content, str) and len(content) > 500:
+                    content = content[:500] + "..."
+                task["events"].append({
+                    "type": "tool_result",
+                    "message": str(content)[:500] if content else "(empty)",
+                    "ts": _ts(),
+                })
+            elif etype == "result":
+                # Final result
+                result_text = evt.get("result", evt.get("text", ""))
+                if result_text:
+                    final_text_parts.append(result_text)
+                task["events"].append({
+                    "type": "result",
+                    "message": result_text[:500] if result_text else "",
+                    "ts": _ts(),
+                })
+            elif etype == "error":
+                task["events"].append({
+                    "type": "error",
+                    "message": evt.get("error", evt.get("message", str(evt))),
+                    "ts": _ts(),
+                })
+            else:
+                # Other events (system, etc) - show if they have useful content
+                msg = evt.get("message", evt.get("text", ""))
+                if msg:
+                    task["events"].append({"type": etype or "info", "message": str(msg)[:300], "ts": _ts()})
+
+        await proc.wait()
+        task["final_output"] = "\n".join(final_text_parts) if final_text_parts else "(no output)"
+        task["status"] = "done"
+        task["events"].append({"type": "status", "message": "Investigation complete.", "ts": _ts()})
+
+    except asyncio.CancelledError:
+        task["status"] = "stopped"
+        task["events"].append({"type": "status", "message": "Stopped by user.", "ts": _ts()})
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    except Exception as e:
+        task["status"] = "error"
+        task["events"].append({"type": "error", "message": f"Error: {e}", "ts": _ts()})
+
+
+@app.post("/api/v1/ai/start", dependencies=[Depends(verify_api_key)])
+async def ai_start(request: Request):
+    """Start a streaming AI investigation. Returns task_id for SSE stream."""
+    data = await request.json()
+    issue_text = data.get("issue", data.get("error_text", ""))
+    service = data.get("service", "")
+    auto_fix = data.get("auto_fix", True)
+    if not issue_text:
+        raise HTTPException(400, "Missing issue text")
+
+    task_id = secrets.token_hex(8)
+    _ai_tasks[task_id] = {
+        "status": "starting",
+        "events": [],
+        "process": None,
+        "final_output": "",
+        "started_at": time.time(),
+        "issue": issue_text,
+        "service": service,
     }
+    # Launch in background
+    asyncio.create_task(_start_claude_stream(task_id, _build_prompt(issue_text, service, auto_fix)))
+    return {"task_id": task_id}
+
+
+@app.get("/api/v1/ai/stream/{task_id}", dependencies=[Depends(verify_api_key)])
+async def ai_stream(task_id: str):
+    """SSE stream of AI investigation events."""
+    if task_id not in _ai_tasks:
+        raise HTTPException(404, "Task not found")
+
+    async def event_generator():
+        last_idx = 0
+        while True:
+            task = _ai_tasks.get(task_id)
+            if not task:
+                break
+            events = task["events"]
+            while last_idx < len(events):
+                evt = events[last_idx]
+                yield f"data: {json.dumps(evt)}\n\n"
+                last_idx += 1
+            if task["status"] in ("done", "error", "stopped"):
+                yield f"data: {json.dumps({'type': 'done', 'message': task['status'], 'final_output': task.get('final_output', ''), 'duration_ms': int((time.time() - task['started_at']) * 1000)})}\n\n"
+                break
+            await asyncio.sleep(0.3)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.post("/api/v1/ai/stop/{task_id}", dependencies=[Depends(verify_api_key)])
+async def ai_stop(task_id: str):
+    """Stop a running AI investigation."""
+    task = _ai_tasks.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    proc = task.get("process")
+    if proc and proc.returncode is None:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    task["status"] = "stopped"
+    task["events"].append({"type": "status", "message": "Stopped by user."})
+    return {"status": "stopped"}
+
+
+@app.post("/api/v1/ai/message/{task_id}", dependencies=[Depends(verify_api_key)])
+async def ai_send_message(task_id: str, request: Request):
+    """Send a follow-up message to override or guide the AI. Starts a new Claude call with context."""
+    task = _ai_tasks.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    data = await request.json()
+    user_msg = data.get("message", "")
+    if not user_msg:
+        raise HTTPException(400, "Missing message")
+
+    # Stop current process if running
+    proc = task.get("process")
+    if proc and proc.returncode is None:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    # Build follow-up prompt with context of what was done so far
+    context_events = [e["message"] for e in task["events"] if e.get("message")]
+    prior_context = "\n".join(context_events[-20:])  # Last 20 events for context
+    prompt = (
+        f"{_PROD_CONTEXT}\n\n"
+        f"Service: {task.get('service', '')}\n"
+        f"Original issue: {task.get('issue', '')}\n\n"
+        f"Previous investigation summary:\n{prior_context}\n\n"
+        f"USER OVERRIDE: {user_msg}\n\n"
+        f"Follow the user's instruction above. Continue investigating or apply the fix as directed."
+    )
+
+    task["status"] = "running"
+    task["events"].append({"type": "user", "message": f"User: {user_msg}"})
+    asyncio.create_task(_start_claude_stream(task_id, prompt))
+    return {"status": "ok"}
+
+
+# Keep old endpoints as aliases for backward compat
+@app.post("/api/v1/issues/fix-one", dependencies=[Depends(verify_api_key)])
+async def fix_one_issue(request: Request):
+    """Redirects to streaming AI start."""
+    return await ai_start(request)
 
 
 @app.post("/api/v1/issues/execute-plan", dependencies=[Depends(verify_api_key)])
 async def execute_plan(request: Request):
-    """AI Agent autonomously investigates and fixes."""
+    """Execute approved steps or start AI agent."""
     data = await request.json()
-    steps = data.get("steps", [])
-    use_agent = data.get("use_agent", False)
-    issue_text = data.get("issue", "")
-    service = data.get("service", "")
-
-    if use_agent:
-        prompt = (
-            f"{_PROD_CONTEXT}\n\n"
-            f"{'Service: ' + service + chr(10) if service else ''}"
-            f"Issue: {issue_text}\n\n"
-            f"AUTONOMOUSLY investigate and fix this issue on the PRODUCTION cluster.\n"
-            f"You have full access to kubectl, logs, MongoDB, source code repos at /opt/clawdbot/repos/.\n"
-            f"Do whatever is needed: restart pods, check logs, query MongoDB, read source code.\n"
-            f"If it's a code bug, read the source, make the fix, build and test.\n"
-            f"Do NOT commit/push code without explicit approval.\n\n"
-            f"After fixing, verify the fix worked and report everything you did.\n"
-            f"Save a brief summary to /opt/clawdbot/.claude/projects/-opt-clawdbot/memory/incident-learnings.md"
-        )
-        start = time.time()
-        result = await _run_claude(prompt, timeout=None)
-        return {
-            "status": "done",
-            "agent_log": [{"type": "result", "text": result}],
-            "final_output": result,
-            "duration_ms": int((time.time() - start) * 1000),
-            "executed_steps": [],
-        }
-
-    # Execute approved steps
+    if data.get("use_agent", False):
+        return await ai_start(request)
     executed = []
-    for step in steps:
+    for step in data.get("steps", []):
         cmd = step.get("command", "")
         if not cmd:
             executed.append({"command": cmd, "success": False, "output": "Empty command"})
@@ -507,7 +700,7 @@ async def analyze_and_fix(dry_run: bool = True):
 
 @app.post("/api/v1/analysis/ai-fix", dependencies=[Depends(verify_api_key)])
 async def ai_fix(request: Request):
-    """AI Error Diagnosis panel - Claude investigates and optionally auto-fixes."""
+    """AI Error Diagnosis panel — starts streaming AI investigation."""
     data = await request.json()
     error_text = data.get("error_text", "")
     service = data.get("service", "")
@@ -515,76 +708,18 @@ async def ai_fix(request: Request):
     if not error_text:
         raise HTTPException(400, "Missing error_text")
 
-    if auto_execute:
-        prompt = (
-            f"{_PROD_CONTEXT}\n\n"
-            f"{'Service: ' + service + chr(10) if service else ''}"
-            f"Error/Problem: {error_text}\n\n"
-            f"INVESTIGATE AND FIX this issue autonomously on the PRODUCTION cluster.\n"
-            f"Use kubectl to check pods, logs, events, MongoDB queries — whatever is needed.\n"
-            f"Apply safe fixes directly (restart pods, clear sessions, scale up, etc.).\n"
-            f"If it's a code bug, identify it, describe the fix needed, but do NOT commit/push.\n"
-            f"Verify the fix worked after applying it.\n\n"
-            f"Save a brief summary to /opt/clawdbot/.claude/projects/-opt-clawdbot/memory/incident-learnings.md"
-        )
-    else:
-        prompt = (
-            f"{_PROD_CONTEXT}\n\n"
-            f"{'Service: ' + service + chr(10) if service else ''}"
-            f"Error/Problem: {error_text}\n\n"
-            f"DIAGNOSE this issue on the PRODUCTION cluster.\n"
-            f"Use kubectl to check pods, logs, events, MongoDB queries — whatever is needed.\n"
-            f"Find the root cause and explain what's happening and how to fix it.\n"
-            f"Be thorough in your investigation."
-        )
-
-    start = time.time()
-    result = await _run_claude(prompt, timeout=None)
-    duration_ms = int((time.time() - start) * 1000)
-    return {
-        "status": "ok",
-        "diagnosis": result,
-        "steps": [],
-        "duration_ms": duration_ms,
+    task_id = secrets.token_hex(8)
+    _ai_tasks[task_id] = {
+        "status": "starting",
+        "events": [],
+        "process": None,
+        "final_output": "",
+        "started_at": time.time(),
+        "issue": error_text,
+        "service": service,
     }
-
-
-async def _run_claude(prompt: str, timeout: int | None = None) -> str:
-    """Run claude CLI with a prompt and return the text output. No timeout by default."""
-    cmd = [
-        "claude", "-p", "--output-format", "text",
-        "--dangerously-skip-permissions",
-    ]
-    env = os.environ.copy()
-    env.pop("ANTHROPIC_API_KEY", None)
-    env.pop("CLAUDECODE", None)
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-            cwd="/opt/clawdbot",
-        )
-        if timeout:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input=prompt.encode()), timeout=timeout
-            )
-        else:
-            stdout, stderr = await proc.communicate(input=prompt.encode())
-        output = stdout.decode("utf-8", errors="replace").strip()
-        if not output and stderr:
-            output = stderr.decode("utf-8", errors="replace").strip()
-        return output or "(no output)"
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        return "(Claude timed out)"
-    except Exception as e:
-        return f"(Error running Claude: {e})"
+    asyncio.create_task(_start_claude_stream(task_id, _build_prompt(error_text, service, auto_execute)))
+    return {"task_id": task_id}
 
 
 
