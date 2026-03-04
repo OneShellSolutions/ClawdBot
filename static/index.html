@@ -223,10 +223,10 @@
                                     </div>
                                 </div>
 
-                                <!-- User message input (override AI) -->
-                                <div x-show="issue._fixing" style="display:flex; gap:4px; margin-top:6px;">
+                                <!-- User message input — visible during AND after investigation -->
+                                <div x-show="issue._aiTaskId" style="display:flex; gap:4px; margin-top:6px;">
                                     <input type="text" x-model="issue._aiMsg"
-                                           placeholder="Send instruction to AI (e.g. 'check NATS instead', 'restart the pod')..."
+                                           :placeholder="issue._fixing ? 'Send instruction to AI...' : 'Ask follow-up or tell AI to take action...'"
                                            style="flex:1; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px 10px; font-size:12px;"
                                            @keydown.enter="sendAiMessage(issue)">
                                     <button class="btn btn-sm" @click="sendAiMessage(issue)" :disabled="!issue._aiMsg?.trim()">Send</button>
@@ -239,13 +239,9 @@
                                          x-text="issue._fixResult?.diagnosis"></pre>
                                 </div>
 
-                                <!-- Save Learning button (after fix completes) -->
+                                <!-- Action bar after completion -->
                                 <div x-show="issue._fixResult && !issue._fixing" style="margin-top:8px; padding-top:8px; border-top:1px solid var(--border);">
-                                    <div style="display:flex; gap:4px; align-items:center;">
-                                        <input type="text" x-model="issue._learningNote"
-                                               placeholder="Add context for memory (optional)..."
-                                               style="flex:1; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:5px 8px; font-size:11px;"
-                                               @keydown.enter="saveLearning(issue)">
+                                    <div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;">
                                         <button class="btn btn-sm" style="background:var(--accent);" @click="saveLearning(issue)"
                                                 :disabled="issue._savingLearning">
                                             <span x-text="issue._savingLearning ? 'Saving...' : 'Save Learning'"></span>
@@ -319,9 +315,9 @@
                         </div>
                     </div>
                     <!-- User message override -->
-                    <div x-show="aiFixLoading" style="display:flex; gap:4px; margin-top:6px;">
+                    <div x-show="aiFixTaskId" style="display:flex; gap:4px; margin-top:6px;">
                         <input type="text" x-model="aiFixMsg"
-                               placeholder="Send instruction to AI..."
+                               :placeholder="aiFixLoading ? 'Send instruction to AI...' : 'Ask follow-up or tell AI to take action...'"
                                style="flex:1; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px 10px; font-size:12px;"
                                @keydown.enter="sendAiFixMessage()">
                         <button class="btn btn-sm" @click="sendAiFixMessage()" :disabled="!aiFixMsg?.trim()">Send</button>
@@ -1021,10 +1017,10 @@
                                 </div>
                             </div>
 
-                            <!-- User message input -->
-                            <div x-show="issue._fixing" style="display:flex; gap:4px; margin-top:6px;">
+                            <!-- User message input — visible during AND after investigation -->
+                            <div x-show="issue._aiTaskId" style="display:flex; gap:4px; margin-top:6px;">
                                 <input type="text" x-model="issue._aiMsg"
-                                       placeholder="Send instruction to AI..."
+                                       :placeholder="issue._fixing ? 'Send instruction to AI...' : 'Ask follow-up or tell AI to take action...'"
                                        style="flex:1; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:6px 10px; font-size:12px;"
                                        @keydown.enter="sendAiMessage(issue)">
                                 <button class="btn btn-sm" @click="sendAiMessage(issue)" :disabled="!issue._aiMsg?.trim()">Send</button>
@@ -1037,13 +1033,9 @@
                                      x-text="issue._fixResult?.diagnosis"></pre>
                             </div>
 
-                            <!-- Save Learning button -->
+                            <!-- Action bar after completion -->
                             <div x-show="issue._fixResult && !issue._fixing" style="margin-top:8px; padding-top:8px; border-top:1px solid var(--border);">
-                                <div style="display:flex; gap:4px; align-items:center;">
-                                    <input type="text" x-model="issue._learningNote"
-                                           placeholder="Add context for memory (optional)..."
-                                           style="flex:1; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:5px 8px; font-size:11px;"
-                                           @keydown.enter="saveLearning(issue)">
+                                <div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;">
                                     <button class="btn btn-sm" style="background:var(--accent);" @click="saveLearning(issue)"
                                             :disabled="issue._savingLearning">
                                         <span x-text="issue._savingLearning ? 'Saving...' : 'Save Learning'"></span>

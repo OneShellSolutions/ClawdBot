@@ -108,6 +108,7 @@ class Executor:
         session_id = self.ctx_mgr.get_session_id(task.chat_id, task.context)
 
         opts = ClaudeAgentOptions(
+            model="claude-opus-4-6",
             cwd=working_dir,
             allowed_tools=["Bash(*)", "Read", "Write", "Edit", "Glob", "Grep", "Task"],
             permission_mode="bypassPermissions",
@@ -251,6 +252,7 @@ class Executor:
         cmd = [
             "claude",
             "-p", task.prompt,
+            "--model", "claude-opus-4-6",
             "--output-format", "stream-json",
             "--verbose",
             "--dangerously-skip-permissions",

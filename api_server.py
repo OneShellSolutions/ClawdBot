@@ -438,7 +438,8 @@ def _build_prompt(issue_text: str, service: str = "", auto_fix: bool = True) -> 
 async def _start_claude_stream(task_id: str, prompt: str):
     """Spawn claude CLI with stream-json output and collect events."""
     cmd = [
-        "claude", "-p", "--output-format", "stream-json",
+        "claude", "-p", "--model", "claude-opus-4-6",
+        "--output-format", "stream-json",
         "--verbose", "--dangerously-skip-permissions",
     ]
     env = os.environ.copy()
