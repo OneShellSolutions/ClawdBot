@@ -421,7 +421,7 @@ async def fix_one_issue(request: Request):
         f"(append to file, create if not exists) so future investigations can reference past fixes."
     )
     start = time.time()
-    result = await _run_claude(prompt, timeout=600)
+    result = await _run_claude(prompt, timeout=None)
     duration_ms = int((time.time() - start) * 1000)
     return {
         "status": "ok",
@@ -454,7 +454,7 @@ async def execute_plan(request: Request):
             f"Save a brief summary to /opt/clawdbot/.claude/projects/-opt-clawdbot/memory/incident-learnings.md"
         )
         start = time.time()
-        result = await _run_claude(prompt, timeout=600)
+        result = await _run_claude(prompt, timeout=None)
         return {
             "status": "done",
             "agent_log": [{"type": "result", "text": result}],
@@ -539,7 +539,7 @@ async def ai_fix(request: Request):
         )
 
     start = time.time()
-    result = await _run_claude(prompt, timeout=600)
+    result = await _run_claude(prompt, timeout=None)
     duration_ms = int((time.time() - start) * 1000)
     return {
         "status": "ok",
@@ -549,8 +549,8 @@ async def ai_fix(request: Request):
     }
 
 
-async def _run_claude(prompt: str, timeout: int = 90) -> str:
-    """Run claude CLI with a prompt and return the text output."""
+async def _run_claude(prompt: str, timeout: int | None = None) -> str:
+    """Run claude CLI with a prompt and return the text output. No timeout by default."""
     cmd = [
         "claude", "-p", "--output-format", "text",
         "--dangerously-skip-permissions",
@@ -567,9 +567,12 @@ async def _run_claude(prompt: str, timeout: int = 90) -> str:
             env=env,
             cwd="/opt/clawdbot",
         )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(input=prompt.encode()), timeout=timeout
-        )
+        if timeout:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=prompt.encode()), timeout=timeout
+            )
+        else:
+            stdout, stderr = await proc.communicate(input=prompt.encode())
         output = stdout.decode("utf-8", errors="replace").strip()
         if not output and stderr:
             output = stderr.decode("utf-8", errors="replace").strip()
