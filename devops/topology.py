@@ -78,8 +78,25 @@ SERVICE_TOPOLOGY: dict[str, ServiceInfo] = {
         dependencies=["MongoDbService", "PosServerBackend"],
         health_path="/actuator/health",
     ),
+    "PosDockerPullService": ServiceInfo(
+        name="PosDockerPullService", namespace="default", port=8093,
+        tier=ServiceTier.STANDARD, replicas=2,
+        dependencies=["MongoDbService"],
+        health_path="/actuator/health",
+    ),
+    "PosDockerSyncService": ServiceInfo(
+        name="PosDockerSyncService", namespace="default", port=8092,
+        tier=ServiceTier.STANDARD, replicas=2,
+        dependencies=["MongoDbService"],
+        health_path="/actuator/health",
+    ),
     "mongoeventlistner": ServiceInfo(
         name="mongoeventlistner", namespace="default", port=8098,
+        tier=ServiceTier.STANDARD, dependencies=["MongoDbService"],
+        health_path="/actuator/health",
+    ),
+    "authservice": ServiceInfo(
+        name="authservice", namespace="default", port=8080,
         tier=ServiceTier.STANDARD, dependencies=["MongoDbService"],
         health_path="/actuator/health",
     ),
@@ -88,10 +105,41 @@ SERVICE_TOPOLOGY: dict[str, ServiceInfo] = {
         tier=ServiceTier.STANDARD, dependencies=[],
         health_path="/health",
     ),
+    "PosAdmin": ServiceInfo(
+        name="PosAdmin", namespace="default", port=80,
+        tier=ServiceTier.STANDARD, dependencies=["GatewayService"],
+        health_path="/",
+    ),
+    "PosHome": ServiceInfo(
+        name="PosHome", namespace="default", port=80,
+        tier=ServiceTier.STANDARD, dependencies=[],
+        health_path="/",
+    ),
     "PosPythonBackend": ServiceInfo(
         name="PosPythonBackend", namespace="pos", port=5100,
         tier=ServiceTier.STANDARD, dependencies=["PosClientBackend"],
         health_path="/",
+    ),
+    "PosFrontend": ServiceInfo(
+        name="PosFrontend", namespace="pos", port=80,
+        tier=ServiceTier.IMPORTANT, dependencies=["PosClientBackend", "GatewayService"],
+        health_path="/",
+    ),
+    "PosNodeBackend": ServiceInfo(
+        name="PosNodeBackend", namespace="pos", port=3001,
+        tier=ServiceTier.STANDARD,
+        dependencies=["PosClientBackend"],
+        health_path="/health",
+    ),
+    "AzureOCR": ServiceInfo(
+        name="AzureOCR", namespace="pos", port=8000,
+        tier=ServiceTier.STANDARD, dependencies=[],
+        health_path="/health",
+    ),
+    "Typesense": ServiceInfo(
+        name="Typesense", namespace="pos", port=8108,
+        tier=ServiceTier.STANDARD, dependencies=[],
+        health_path="/health",
     ),
     # --- Infrastructure ---
     "nats-server": ServiceInfo(

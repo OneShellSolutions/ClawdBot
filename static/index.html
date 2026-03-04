@@ -308,6 +308,17 @@
                         <option value="PosService">PosService</option>
                         <option value="Scheduler">Scheduler</option>
                         <option value="QuartzScheduler">QuartzScheduler</option>
+                        <option value="PosDockerPullService">PosDockerPullService</option>
+                        <option value="PosDockerSyncService">PosDockerSyncService</option>
+                        <option value="PosDataSyncService">PosDataSyncService</option>
+                        <option value="EmailService">EmailService</option>
+                        <option value="NotificationService">NotificationService</option>
+                        <option value="WhatsappApiService">WhatsappApiService</option>
+                        <option value="GstApiService">GstApiService</option>
+                        <option value="PosFrontend">PosFrontend</option>
+                        <option value="PosNodeBackend">PosNodeBackend</option>
+                        <option value="PosPythonBackend">PosPythonBackend</option>
+                        <option value="AzureOCR">AzureOCR</option>
                         <option value="NATS">NATS</option>
                         <option value="MongoDB">MongoDB</option>
                         <option value="Redpanda">Redpanda</option>
@@ -881,9 +892,20 @@
                     <option value="posclientbackend">PosClientBackend</option>
                     <option value="mongodbservice">MongoDbService</option>
                     <option value="gatewayservice">GatewayService</option>
+                    <option value="businessservice">BusinessService</option>
                     <option value="posservice">PosService</option>
                     <option value="scheduler">Scheduler</option>
                     <option value="quartzscheduler">QuartzScheduler</option>
+                    <option value="posdockerpullservice">PosDockerPullService</option>
+                    <option value="posdockersyncservice">PosDockerSyncService</option>
+                    <option value="posdatasyncservice">PosDataSyncService</option>
+                    <option value="emailservice">EmailService</option>
+                    <option value="notificationservice">NotificationService</option>
+                    <option value="whatsappapiservice">WhatsappApiService</option>
+                    <option value="gstapiservice">GstApiService</option>
+                    <option value="posfrontend">PosFrontend</option>
+                    <option value="posnodebackend">PosNodeBackend</option>
+                    <option value="pospythonbackend">PosPythonBackend</option>
                 </select>
                 <label><input type="checkbox" x-model="useAI"> Use AI Analysis</label>
                 <button class="btn" @click="analyzeLogs()" :disabled="analyzing">

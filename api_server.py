@@ -345,6 +345,57 @@ async def autodetect_issues():
     return issue_finder.last_scan_result or {"issues": [], "total_issues": 0}
 
 
+_PROD_CONTEXT = (
+    "=== ENVIRONMENT: PRODUCTION CLUSTER (Hetzner Cloud) ===\n"
+    "\n"
+    "KUBERNETES ACCESS:\n"
+    "  PROD: KUBECONFIG=/root/.kube/prod-config kubectl --insecure-skip-tls-verify\n"
+    "  QA:   KUBECONFIG=/root/.kube/qa-config kubectl --insecure-skip-tls-verify\n"
+    "  IMPORTANT: ALWAYS prefix kubectl with the appropriate KUBECONFIG=... path\n"
+    "\n"
+    "PROD NAMESPACES:\n"
+    "  default: MongoDbService, GatewayService, BusinessService, PosService, Scheduler, "
+    "QuartzScheduler, EmailService, NotificationService, GstApiService, "
+    "PosDataSyncService, PosDockerSyncService, PosDockerPullService, "
+    "PosServerBackend, mongoeventlistner, authservice, WhatsappApiService, "
+    "nodeinvoicethemes, PosAdmin, PosHome, CacheLayer (Dragonfly)\n"
+    "  pos: PosClientBackend, PosPythonBackend, PosNodeBackend, PosFrontend, "
+    "NATS, AzureOCR, Typesense\n"
+    "  mongodb: Percona MongoDB Operator (prod-cluster-mongos-0)\n"
+    "  redpanda: Redpanda broker + Debezium Connect\n"
+    "  tekton-pipelines: CI/CD pipelines\n"
+    "  argocd: GitOps deployments\n"
+    "\n"
+    "QA NAMESPACES: same structure but with qa-cluster-mongos-0 in mongodb namespace\n"
+    "\n"
+    "MONGODB:\n"
+    "  Prod: KUBECONFIG=/root/.kube/prod-config kubectl exec -n mongodb prod-cluster-mongos-0 "
+    "--insecure-skip-tls-verify -- mongosh "
+    "'mongodb://databaseAdmin:akyFqNelEclMhlkNx06c@localhost:27017/oneshell?authSource=admin' --quiet --eval\n"
+    "  QA: KUBECONFIG=/root/.kube/qa-config kubectl exec -n mongodb qa-cluster-mongos-0 "
+    "--insecure-skip-tls-verify -- mongosh "
+    "'mongodb://databaseAdmin:akyFqNelEclMhlkNx06c@localhost:27017/oneshell?authSource=admin' --quiet --eval\n"
+    "\n"
+    "SOURCE CODE & FIX WORKFLOW:\n"
+    "  All repos cloned at /opt/clawdbot/repos/ (BusinessService, PosServerBackend, PosClientBackend, etc.)\n"
+    "  GitHub org: github.com/OneShellSolutions\n"
+    "  To fix a service:\n"
+    "    1. Investigate: check logs, events, describe pods\n"
+    "    2. Read source code at /opt/clawdbot/repos/<RepoName>/\n"
+    "    3. Make the fix in the source code\n"
+    "    4. Build: cd /opt/clawdbot/repos/<repo> && JAVA_HOME=/usr/lib/jvm/jdk-24 ./mvnw clean package -DskipTests\n"
+    "    5. Test via port-forward to QA cluster: KUBECONFIG=/root/.kube/qa-config kubectl port-forward svc/<service> <port>:<port> -n <ns> --insecure-skip-tls-verify\n"
+    "    6. Commit and push to master: git add . && git commit -m 'fix: description' && git push origin master\n"
+    "    7. QA auto-deploys on master push (Tekton + ArgoCD)\n"
+    "    8. For PROD release: git tag v1.x.x && git push origin v1.x.x\n"
+    "  Java versions: read pom.xml <java.version> to pick JDK\n"
+    "    JDK 17: /usr/lib/jvm/java-17-openjdk-amd64\n"
+    "    JDK 21: /usr/lib/jvm/java-21-openjdk-amd64\n"
+    "    JDK 24: /usr/lib/jvm/jdk-24\n"
+    "  NEVER commit/push without explicit user approval\n"
+)
+
+
 @app.post("/api/v1/issues/fix-one", dependencies=[Depends(verify_api_key)])
 async def fix_one_issue(request: Request):
     data = await request.json()
@@ -353,10 +404,12 @@ async def fix_one_issue(request: Request):
     if not issue_text:
         raise HTTPException(400, "Missing issue text")
     prompt = (
-        f"You are a Kubernetes DevOps expert. Diagnose this issue and provide fix steps.\n"
-        f"Service: {service}\nIssue: {issue_text}\n\n"
-        f"Return JSON with: diagnosis (string), steps (array of {{description, command, risk}}).\n"
-        f"Commands should use kubectl with --insecure-skip-tls-verify. Only suggest safe, read-first commands."
+        f"{_PROD_CONTEXT}\n"
+        f"Diagnose this issue and provide fix steps.\n"
+        f"{'Service: ' + service + chr(10) if service else ''}"
+        f"Issue: {issue_text}\n\n"
+        f"Return JSON: {{\"diagnosis\": \"...\", \"steps\": [{{\"description\": \"...\", \"command\": \"...\", \"risk\": \"low|medium|high\"}}]}}\n"
+        f"Use the kubectl prefix above. Investigate first (logs, describe, events), then suggest fixes."
     )
     result = await _run_claude(prompt, timeout=60)
     return _parse_ai_response(result)
@@ -372,11 +425,12 @@ async def execute_plan(request: Request):
 
     if use_agent:
         prompt = (
-            f"You are a Kubernetes DevOps expert with kubectl access. "
-            f"Investigate and fix this issue autonomously.\n"
-            f"Service: {service}\nIssue: {issue_text}\n\n"
-            f"Use kubectl with --insecure-skip-tls-verify. "
-            f"First investigate (logs, events, describe), then apply safe fixes. "
+            f"{_PROD_CONTEXT}\n"
+            f"Investigate and fix this issue autonomously on the PRODUCTION cluster.\n"
+            f"{'Service: ' + service + chr(10) if service else ''}"
+            f"Issue: {issue_text}\n\n"
+            f"Use the kubectl prefix above. "
+            f"First investigate (logs, events, describe pod), then apply safe fixes. "
             f"Report what you found and what you did."
         )
         start = time.time()
@@ -442,16 +496,15 @@ async def ai_fix(request: Request):
         raise HTTPException(400, "Missing error_text")
 
     prompt = (
-        f"You are a Kubernetes DevOps expert for OneShell POS (microservices on K8s).\n"
+        f"{_PROD_CONTEXT}\n"
         f"{'Service: ' + service + chr(10) if service else ''}"
-        f"Error: {error_text}\n\n"
+        f"Error/Question: {error_text}\n\n"
         f"Diagnose the root cause and provide actionable fix steps.\n"
-        f"Return JSON: {{\"diagnosis\": \"...\", \"steps\": [{{\"description\": \"...\", \"command\": \"kubectl ...\", \"risk\": \"low|medium|high\"}}]}}\n"
-        f"Use --insecure-skip-tls-verify with all kubectl commands. "
-        f"Namespaces: default (most services), pos (PosClientBackend, PosPythonBackend, NATS), mongodb (Percona)."
+        f"Return JSON: {{\"diagnosis\": \"...\", \"steps\": [{{\"description\": \"...\", \"command\": \"...\", \"risk\": \"low|medium|high\"}}]}}\n"
+        f"Use the kubectl prefix above. Investigate first, then suggest fixes."
     )
     start = time.time()
-    result = await _run_claude(prompt, timeout=90)
+    result = await _run_claude(prompt, timeout=180)
     parsed = _parse_ai_response(result)
     parsed["duration_ms"] = int((time.time() - start) * 1000)
 
