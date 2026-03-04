@@ -131,7 +131,7 @@ APScheduler runs 6 monitors alongside the Telegram bot:
 ### Install
 
 ```bash
-git clone https://github.com/Manikanta-Reddy-Pasala/ClawdBot.git
+git clone https://github.com/OneShellSolutions/ClawdBot.git
 cd ClawdBot
 python3 -m venv venv
 source venv/bin/activate
