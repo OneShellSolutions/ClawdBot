@@ -249,7 +249,7 @@ document.addEventListener('alpine:init', () => {
             const data = await this.api('/api/v1/issues/autodetect', { method: 'POST' });
             if (data) {
                 // Add UI state to each issue
-                data.issues = (data.issues || []).map(i => ({ ...i, _fixing: false, _executing: false, _fixResult: null, _fixProgress: [], _agentLog: [], _manualCmd: '', _manualOutput: '' }));
+                data.issues = (data.issues || []).map(i => ({ ...i, _fixing: false, _executing: false, _fixResult: null, _fixProgress: [], _agentLog: [], _manualCmd: '', _manualOutput: '', _aiMsg: '', _aiTaskId: null, _savingLearning: false, _learningNote: '' }));
                 this.autodetectResult = data;
             }
             this.autodetectRunning = false;
@@ -335,6 +335,23 @@ document.addEventListener('alpine:init', () => {
                 body: JSON.stringify({ message: msg }),
             });
             issue._fixing = true;
+        },
+
+        async saveLearning(issue) {
+            if (!issue._aiTaskId) return;
+            issue._savingLearning = true;
+            const note = issue._learningNote || '';
+            issue._agentLog.push({ type: 'status', message: 'Saving learning to memory...' });
+            issue._fixing = true;
+
+            await this.api(`/api/v1/ai/save-learning/${issue._aiTaskId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ note }),
+            });
+
+            // Re-open SSE stream for the save operation
+            this._streamAiEvents(issue, issue._aiTaskId);
         },
 
         async runManualCmd(issue) {
@@ -528,7 +545,7 @@ document.addEventListener('alpine:init', () => {
             this.issuesPageScanning = true;
             const data = await this.api('/api/v1/issues/autodetect', { method: 'POST' });
             if (data) {
-                data.issues = (data.issues || []).map(i => ({ ...i, _fixing: false, _executing: false, _fixResult: null, _fixProgress: [], _agentLog: [], _manualCmd: '', _manualOutput: '' }));
+                data.issues = (data.issues || []).map(i => ({ ...i, _fixing: false, _executing: false, _fixResult: null, _fixProgress: [], _agentLog: [], _manualCmd: '', _manualOutput: '', _aiMsg: '', _aiTaskId: null, _savingLearning: false, _learningNote: '' }));
                 this.issuesPageResult = data;
                 this.issueCount = data.total || 0;
             }

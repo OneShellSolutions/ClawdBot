@@ -400,25 +400,38 @@ _PROD_CONTEXT = (
 _ai_tasks: dict[str, dict] = {}
 
 
+_MEMORY_FILE = "/opt/clawdbot/.claude/projects/-opt-clawdbot/memory/incident-learnings.md"
+
+
 def _build_prompt(issue_text: str, service: str = "", auto_fix: bool = True) -> str:
     """Build the Claude prompt for AI investigation."""
     action = "INVESTIGATE AND FIX" if auto_fix else "DIAGNOSE"
     fix_instructions = (
         "Apply safe fixes directly (restart pods, clear sessions, scale up, etc.).\n"
         "If it's a code bug, identify it, describe the fix needed, but do NOT commit/push.\n"
-        "Verify the fix worked after applying it.\n\n"
-        "Save a brief summary to /opt/clawdbot/.claude/projects/-opt-clawdbot/memory/incident-learnings.md"
+        "Verify the fix worked after applying it.\n"
     ) if auto_fix else (
         "Find the root cause and explain what's happening and how to fix it.\n"
-        "Be thorough in your investigation."
+        "Be thorough in your investigation.\n"
     )
     return (
         f"{_PROD_CONTEXT}\n\n"
         f"{'Service: ' + service + chr(10) if service else ''}"
         f"Issue: {issue_text}\n\n"
-        f"{action} this issue on the PRODUCTION cluster.\n"
+        f"{action} this issue on the PRODUCTION cluster.\n\n"
+        f"STEP 1 - CHECK MEMORY FIRST:\n"
+        f"Read {_MEMORY_FILE} and check if this issue (or a similar one) was solved before.\n"
+        f"If a known fix exists, tell the user: 'Found a previous fix for this issue:' and show it.\n"
+        f"Then ask: 'Should I apply this known fix, or investigate fresh?'\n"
+        f"If no match is found in memory, proceed to investigate.\n\n"
+        f"STEP 2 - INVESTIGATE:\n"
         f"Use kubectl to check pods, logs, events, MongoDB queries — whatever is needed.\n"
-        f"{fix_instructions}"
+        f"{fix_instructions}\n"
+        f"STEP 3 - SAVE LEARNING:\n"
+        f"After resolving (or diagnosing), append a concise entry to {_MEMORY_FILE} with:\n"
+        f"- Date, issue summary, root cause, fix applied, verification result\n"
+        f"- Keep entries short (10-15 lines max). Do NOT duplicate existing entries.\n"
+        f"- If the same issue already exists in memory, update the existing entry instead.\n"
     )
 
 
@@ -642,6 +655,39 @@ async def ai_send_message(task_id: str, request: Request):
     task["events"].append({"type": "user", "message": f"User: {user_msg}"})
     asyncio.create_task(_start_claude_stream(task_id, prompt))
     return {"status": "ok"}
+
+
+@app.post("/api/v1/ai/save-learning/{task_id}", dependencies=[Depends(verify_api_key)])
+async def ai_save_learning(task_id: str, request: Request):
+    """Trigger Claude to save/update the learning from a completed investigation."""
+    task = _ai_tasks.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+
+    data = await request.json()
+    user_note = data.get("note", "")
+
+    context_events = [e["message"] for e in task["events"] if e.get("message")]
+    investigation_summary = "\n".join(context_events[-30:])
+
+    prompt = (
+        f"You previously investigated this issue:\n"
+        f"Issue: {task.get('issue', '')}\n"
+        f"Service: {task.get('service', '')}\n\n"
+        f"Investigation log:\n{investigation_summary}\n\n"
+        f"Final output:\n{task.get('final_output', '')}\n\n"
+        f"{'User note: ' + user_note + chr(10) if user_note else ''}"
+        f"TASK: Save a concise learning entry to {_MEMORY_FILE}\n"
+        f"Format: ## Date: Issue Title\\n### Root Cause\\n### Fix Applied\\n### Verification\\n"
+        f"Keep it to 10-15 lines. If a similar entry already exists, UPDATE it instead of duplicating.\n"
+        f"Read the file first to check for duplicates."
+    )
+
+    # Reuse the same task_id — reset it for the save operation
+    task["status"] = "running"
+    task["events"].append({"type": "status", "message": "Saving learning to memory..."})
+    asyncio.create_task(_start_claude_stream(task_id, prompt))
+    return {"status": "saving"}
 
 
 # Keep old endpoints as aliases for backward compat

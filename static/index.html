@@ -239,6 +239,21 @@
                                          x-text="issue._fixResult?.diagnosis"></pre>
                                 </div>
 
+                                <!-- Save Learning button (after fix completes) -->
+                                <div x-show="issue._fixResult && !issue._fixing" style="margin-top:8px; padding-top:8px; border-top:1px solid var(--border);">
+                                    <div style="display:flex; gap:4px; align-items:center;">
+                                        <input type="text" x-model="issue._learningNote"
+                                               placeholder="Add context for memory (optional)..."
+                                               style="flex:1; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:5px 8px; font-size:11px;"
+                                               @keydown.enter="saveLearning(issue)">
+                                        <button class="btn btn-sm" style="background:var(--accent);" @click="saveLearning(issue)"
+                                                :disabled="issue._savingLearning">
+                                            <span x-text="issue._savingLearning ? 'Saving...' : 'Save Learning'"></span>
+                                        </button>
+                                        <button class="btn btn-sm" @click="diagnoseIssue(issue)">Retry AI</button>
+                                    </div>
+                                </div>
+
                                 <!-- Status messages -->
                                 <template x-for="msg in (issue._fixProgress || [])">
                                     <div style="font-size:10px; color:var(--text-dim); padding:2px 0;" x-text="msg"></div>
@@ -1020,6 +1035,21 @@
                                 <h4 style="font-size:12px; color:var(--accent); margin-bottom:4px;">AI Investigation Report:</h4>
                                 <pre style="font-size:11px; padding:10px; background:var(--bg); border-radius:6px; white-space:pre-wrap; word-wrap:break-word; max-height:500px; overflow-y:auto; line-height:1.5; color:var(--text); border-left:3px solid var(--accent);"
                                      x-text="issue._fixResult?.diagnosis"></pre>
+                            </div>
+
+                            <!-- Save Learning button -->
+                            <div x-show="issue._fixResult && !issue._fixing" style="margin-top:8px; padding-top:8px; border-top:1px solid var(--border);">
+                                <div style="display:flex; gap:4px; align-items:center;">
+                                    <input type="text" x-model="issue._learningNote"
+                                           placeholder="Add context for memory (optional)..."
+                                           style="flex:1; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:5px 8px; font-size:11px;"
+                                           @keydown.enter="saveLearning(issue)">
+                                    <button class="btn btn-sm" style="background:var(--accent);" @click="saveLearning(issue)"
+                                            :disabled="issue._savingLearning">
+                                        <span x-text="issue._savingLearning ? 'Saving...' : 'Save Learning'"></span>
+                                    </button>
+                                    <button class="btn btn-sm" @click="diagnoseIssue(issue)">Retry AI</button>
+                                </div>
                             </div>
 
                             <template x-for="msg in (issue._fixProgress || [])">
