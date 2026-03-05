@@ -689,10 +689,6 @@
         <!-- Certificates Tab -->
         <div x-show="tab === 'certs'" class="tab-content">
             <h2>TLS Certificates</h2>
-            <div class="alert info" style="margin-bottom:16px; font-size:12px; line-height:1.6;">
-                Monitors the <code>oneshell-credential</code> TLS secret in <code>default</code> namespace.<br>
-                Renewal: <code>kubectl create -n default secret tls oneshell-credential --key=oneshell.key --cert=oneshell.crt</code>
-            </div>
             <div class="section">
                 <template x-for="cert in certificates">
                     <div class="service-card" :class="cert.expired ? 'critical' : cert.expiring_soon ? 'degraded' : 'healthy'" style="max-width:500px;">
