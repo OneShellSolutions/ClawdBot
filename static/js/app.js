@@ -127,6 +127,23 @@ document.addEventListener('alpine:init', () => {
         adminCopyLoading: false,
         adminCopyResult: null,
 
+        // AP Code (manual)
+        apSearch: '',
+        apSearchResults: [],
+        apDropdownOpen: false,
+        apSelectedBusiness: null,
+        apCode: '',
+        apDate: '',
+        apCodeLoading: false,
+        apCodeResult: null,
+
+        // AP Code (bulk upload)
+        apFileSelected: false,
+        apFileName: '',
+        apFileData: null,
+        apBulkLoading: false,
+        apBulkReport: null,
+
         // Overview AI Fix Modal
         aiFixModal: { show: false, component: '', context: '', log: [], taskId: null, loading: false, result: null, msg: '', eventSource: null },
 
@@ -945,6 +962,80 @@ document.addEventListener('alpine:init', () => {
             } else {
                 this.adminCopyResult = { success: false, message: 'Failed: ' + (data?.error || 'Unknown error') };
             }
+        },
+
+        // ---- AP Code (Manual) ----
+        async searchApBusinesses() {
+            const q = this.apSearch.trim();
+            if (q.length < 2) { this.apSearchResults = []; this.apDropdownOpen = false; return; }
+            const data = await this.api(`/api/v1/admin/search-businesses?q=${encodeURIComponent(q)}`);
+            this.apSearchResults = data?.businesses || [];
+            this.apDropdownOpen = this.apSearchResults.length > 0;
+        },
+
+        selectApBusiness(b) {
+            this.apSelectedBusiness = b;
+            this.apSearch = b.businessName || '';
+            this.apDropdownOpen = false;
+            this.apCodeResult = null;
+        },
+
+        clearApBusiness() {
+            this.apSelectedBusiness = null;
+            this.apSearch = '';
+            this.apSearchResults = [];
+            this.apCode = '';
+            this.apDate = '';
+            this.apCodeResult = null;
+        },
+
+        async executeUpdateApCode() {
+            const b = this.apSelectedBusiness;
+            if (!b || !this.apCode?.trim() || !this.apDate) return;
+            const dateParts = this.apDate.split('-');
+            const formattedDate = `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}`;
+            if (!confirm(`Update AP Code for "${b.businessName}"?\n\nAP Code: ${this.apCode}\nDate: ${formattedDate}`)) return;
+            this.apCodeLoading = true;
+            this.apCodeResult = null;
+            const data = await this.api('/api/v1/admin/update-ap-code', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ businessId: b.businessId, partnerCode: this.apCode.trim(), openStockAsOnDate: formattedDate }),
+            });
+            this.apCodeLoading = false;
+            if (data?.success) {
+                this.apCodeResult = { success: true, message: data.message || 'AP Code updated successfully!' };
+            } else {
+                this.apCodeResult = { success: false, message: 'Failed: ' + (data?.error || 'Unknown error') };
+            }
+        },
+
+        // ---- AP Code (Bulk Upload) ----
+        handleApFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                this.apFileSelected = true;
+                this.apFileName = file.name;
+                this.apFileData = file;
+                this.apBulkReport = null;
+            }
+        },
+
+        async uploadApCodes() {
+            if (!this.apFileData) return;
+            this.apBulkLoading = true;
+            this.apBulkReport = null;
+            const formData = new FormData();
+            formData.append('file', this.apFileData);
+            try {
+                const resp = await fetch('/api/v1/admin/bulk-update-ap-codes', { method: 'POST', body: formData });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const data = await resp.json();
+                this.apBulkReport = data;
+            } catch (e) {
+                this.apBulkReport = { successful: [], unmatched: [], failed: [{ partnerName: 'Upload', error: e.message }] };
+            }
+            this.apBulkLoading = false;
         },
     }));
 });

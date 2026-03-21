@@ -1563,6 +1563,140 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Update AP Code (Manual) -->
+            <div class="card" style="margin-bottom:20px;">
+                <div class="card-header"><h3>Update AP Code</h3></div>
+                <div class="card-body">
+                    <p style="color:var(--text-dim); margin-bottom:16px; font-size:13px;">Update AP/partner mapping code for a business and push to Acer.</p>
+                    <div style="max-width:480px;">
+                        <label style="display:block; font-weight:600; margin-bottom:6px; font-size:13px;">Business Name</label>
+                        <div style="position:relative;">
+                            <input type="text" x-model="apSearch" @input.debounce.300ms="searchApBusinesses()" placeholder="Type business name to search..."
+                                style="width:100%; padding:8px 12px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px; outline:none;"
+                                @focus="apDropdownOpen = apSearchResults.length > 0"
+                                @click.away="apDropdownOpen = false">
+                            <div x-show="apDropdownOpen && apSearchResults.length > 0" x-transition
+                                style="position:absolute; top:100%; left:0; right:0; background:var(--card-bg); border:1px solid var(--border); border-radius:6px; margin-top:4px; max-height:200px; overflow-y:auto; z-index:10; box-shadow:0 4px 12px rgba(0,0,0,0.3);">
+                                <template x-for="b in apSearchResults" :key="b.businessId">
+                                    <div @click="selectApBusiness(b)" style="padding:8px 12px; cursor:pointer; border-bottom:1px solid var(--border); font-size:13px; transition:background 0.15s;"
+                                         @mouseover="$el.style.background='var(--bg)'" @mouseout="$el.style.background='transparent'">
+                                        <div style="font-weight:600;" x-text="b.businessName"></div>
+                                        <div style="color:var(--text-dim); font-size:11px;" x-text="(b.businessCity || '') + ' · ' + b.businessId"></div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <div x-show="apSelectedBusiness" x-transition style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:12px; margin-top:12px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                                <span style="font-weight:600; font-size:13px;">Selected Business</span>
+                                <button @click="clearApBusiness()" style="background:none; border:none; color:var(--danger); cursor:pointer; font-size:12px;">Clear</button>
+                            </div>
+                            <div style="font-size:13px; color:var(--text-dim); line-height:1.8;">
+                                <div><strong>Name:</strong> <span x-text="apSelectedBusiness?.businessName || '-'"></span></div>
+                                <div><strong>Business ID:</strong> <span x-text="apSelectedBusiness?.businessId || '-'"></span></div>
+                                <div><strong>City:</strong> <span x-text="apSelectedBusiness?.businessCity || '-'"></span></div>
+                            </div>
+                        </div>
+
+                        <div x-show="apSelectedBusiness" style="margin-top:12px;">
+                            <label style="display:block; font-weight:600; margin-bottom:6px; font-size:13px;">AP Code</label>
+                            <input type="text" x-model="apCode" placeholder="e.g. AP1262"
+                                style="width:100%; padding:8px 12px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px; outline:none; margin-bottom:12px;">
+                            <label style="display:block; font-weight:600; margin-bottom:6px; font-size:13px;">Open Stock Date</label>
+                            <input type="date" x-model="apDate"
+                                style="width:100%; padding:8px 12px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px; outline:none;">
+                        </div>
+
+                        <button class="btn" @click="executeUpdateApCode()" :disabled="!apSelectedBusiness || !apCode?.trim() || !apDate || apCodeLoading" style="margin-top:12px;">
+                            <span x-text="apCodeLoading ? 'Updating...' : 'Update AP Code'"></span>
+                        </button>
+
+                        <div x-show="apCodeResult" x-transition style="margin-top:12px; padding:10px 14px; border-radius:6px; font-size:13px;"
+                             :class="apCodeResult?.success ? 'alert success' : 'alert danger'">
+                            <span x-text="apCodeResult?.message || ''"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bulk Upload AP Codes -->
+            <div class="card" style="margin-bottom:20px;">
+                <div class="card-header"><h3>Bulk Upload AP Codes</h3></div>
+                <div class="card-body">
+                    <p style="color:var(--text-dim); margin-bottom:16px; font-size:13px;">Upload an Excel file (.xlsx) with columns: <strong>AP Code</strong>, <strong>Partner Name</strong>, <strong>Opening Stock Date</strong>, <strong>Live Status</strong>. Business names will be matched automatically.</p>
+                    <div style="max-width:600px;">
+                        <input type="file" accept=".xlsx,.xls" @change="handleApFileSelect($event)" id="apFileInput"
+                            style="padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px; width:100%;">
+
+                        <div x-show="apFileSelected" style="margin-top:8px; font-size:12px; color:var(--text-dim);">
+                            <span x-text="apFileName"></span>
+                        </div>
+
+                        <button class="btn" @click="uploadApCodes()" :disabled="!apFileSelected || apBulkLoading" style="margin-top:12px;">
+                            <span x-text="apBulkLoading ? 'Processing...' : 'Upload & Process'"></span>
+                        </button>
+
+                        <!-- Bulk Upload Report -->
+                        <div x-show="apBulkReport" x-transition style="margin-top:16px;">
+                            <div style="display:flex; gap:12px; margin-bottom:12px;">
+                                <div class="alert success" style="flex:1; text-align:center; padding:10px;">
+                                    <div style="font-size:20px; font-weight:700;" x-text="apBulkReport?.successful?.length || 0"></div>
+                                    <div style="font-size:11px;">Successful</div>
+                                </div>
+                                <div class="alert warning" style="flex:1; text-align:center; padding:10px;">
+                                    <div style="font-size:20px; font-weight:700;" x-text="apBulkReport?.unmatched?.length || 0"></div>
+                                    <div style="font-size:11px;">Not Matched</div>
+                                </div>
+                                <div class="alert danger" style="flex:1; text-align:center; padding:10px;">
+                                    <div style="font-size:20px; font-weight:700;" x-text="apBulkReport?.failed?.length || 0"></div>
+                                    <div style="font-size:11px;">Failed</div>
+                                </div>
+                            </div>
+
+                            <template x-if="apBulkReport?.successful?.length > 0">
+                                <div style="margin-bottom:12px;">
+                                    <h4 style="font-size:13px; color:var(--success); margin-bottom:6px;">Successful</h4>
+                                    <div style="background:var(--bg); border-radius:6px; padding:8px; font-size:12px; max-height:200px; overflow-y:auto;">
+                                        <template x-for="item in apBulkReport.successful">
+                                            <div style="padding:4px 0; border-bottom:1px solid var(--border);">
+                                                <span x-text="item.partnerName"></span> — <span style="color:var(--accent);" x-text="item.apCode"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <template x-if="apBulkReport?.unmatched?.length > 0">
+                                <div style="margin-bottom:12px;">
+                                    <h4 style="font-size:13px; color:var(--warning); margin-bottom:6px;">Not Matched (business name not found)</h4>
+                                    <div style="background:var(--bg); border-radius:6px; padding:8px; font-size:12px; max-height:200px; overflow-y:auto;">
+                                        <template x-for="item in apBulkReport.unmatched">
+                                            <div style="padding:4px 0; border-bottom:1px solid var(--border);">
+                                                <span x-text="item.partnerName"></span> — <span style="color:var(--text-dim);" x-text="item.apCode"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <template x-if="apBulkReport?.failed?.length > 0">
+                                <div style="margin-bottom:12px;">
+                                    <h4 style="font-size:13px; color:var(--danger); margin-bottom:6px;">Failed</h4>
+                                    <div style="background:var(--bg); border-radius:6px; padding:8px; font-size:12px; max-height:200px; overflow-y:auto;">
+                                        <template x-for="item in apBulkReport.failed">
+                                            <div style="padding:4px 0; border-bottom:1px solid var(--border);">
+                                                <span x-text="item.partnerName"></span> — <span style="color:var(--danger);" x-text="item.error"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </main>
 
@@ -1610,6 +1744,6 @@
     <script src="/static/js/websocket.js"></script>
     <script src="/static/js/charts.js"></script>
     <script src="/static/js/topology.js?v=4"></script>
-    <script src="/static/js/app.js?v=4"></script>
+    <script src="/static/js/app.js?v=5"></script>
 </body>
 </html>

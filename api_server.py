@@ -11,7 +11,7 @@ import secrets
 import time
 from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Depends, Form
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Depends, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -2083,6 +2083,126 @@ async def admin_copy_categories(request: Request):
     except Exception as e:
         logger.error("Copy categories failed: %s", e)
         return {"success": False, "error": str(e)}
+
+
+@app.post("/api/v1/admin/update-ap-code", dependencies=[Depends(verify_api_key)])
+async def admin_update_ap_code(request: Request):
+    """Update AP/partner mapping code for a business."""
+    body = await request.json()
+    business_id = body.get("businessId")
+    partner_code = body.get("partnerCode")
+    open_stock_date = body.get("openStockAsOnDate")
+    if not business_id or not partner_code or not open_stock_date:
+        raise HTTPException(400, "businessId, partnerCode, and openStockAsOnDate are required")
+    try:
+        from devops import k8s_client
+        payload = json.dumps({"businessId": business_id, "partnerCode": partner_code, "openStockAsOnDate": open_stock_date})
+        result = await k8s_client.exec_in_pod(
+            "prod-cluster-mongos-0", "mongodb",
+            ["curl", "-s", "-w", "\n%{http_code}", "-X", "POST",
+             "-H", "Content-Type: application/json",
+             "-d", payload,
+             "http://businessservice.default.svc.cluster.local:8092/v1/admin/updateBusinessMappingCode"],
+            timeout=30,
+        )
+        lines = result.strip().rsplit("\n", 1)
+        response_body = lines[0] if len(lines) > 1 else result
+        status_code = int(lines[-1]) if len(lines) > 1 and lines[-1].isdigit() else 0
+        if 200 <= status_code < 300:
+            try:
+                data = json.loads(response_body)
+                msg = data.get("message", "AP Code updated successfully")
+                return {"success": True, "message": msg, "result": data}
+            except (json.JSONDecodeError, TypeError):
+                return {"success": True, "message": "AP Code updated successfully"}
+        return {"success": False, "error": f"API returned {status_code}: {response_body[:500]}"}
+    except Exception as e:
+        logger.error("Update AP code failed: %s", e)
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/v1/admin/bulk-update-ap-codes", dependencies=[Depends(verify_api_key)])
+async def admin_bulk_update_ap_codes(file: UploadFile):
+    """Bulk update AP codes from an uploaded Excel file."""
+    import tempfile
+    try:
+        import openpyxl
+    except ImportError:
+        return {"successful": [], "unmatched": [], "failed": [{"partnerName": "System", "error": "openpyxl not installed on server"}]}
+
+    successful = []
+    unmatched = []
+    failed = []
+
+    try:
+        # Save uploaded file to temp
+        contents = await file.read()
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            tmp.write(contents)
+            tmp_path = tmp.name
+
+        wb = openpyxl.load_workbook(tmp_path)
+        ws = wb.active
+
+        from devops.mongodb_client import search_businesses
+        from devops import k8s_client
+
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if not row or not row[0]:
+                continue
+            ap_code = str(row[0]).strip()
+            partner_name = str(row[1]).strip() if row[1] else ""
+            stock_date = row[2]
+            if not partner_name:
+                continue
+
+            # Format date to dd/MM/yyyy
+            if hasattr(stock_date, 'strftime'):
+                formatted_date = stock_date.strftime("%d/%m/%Y")
+            elif stock_date:
+                formatted_date = str(stock_date).strip()
+            else:
+                formatted_date = ""
+
+            # Search for business by name
+            matches = await search_businesses(partner_name, limit=1)
+            if not matches:
+                unmatched.append({"partnerName": partner_name, "apCode": ap_code})
+                continue
+
+            business = matches[0]
+            business_id = business.get("businessId", "")
+
+            # Call the API
+            try:
+                payload = json.dumps({"businessId": business_id, "partnerCode": ap_code, "openStockAsOnDate": formatted_date})
+                result = await k8s_client.exec_in_pod(
+                    "prod-cluster-mongos-0", "mongodb",
+                    ["curl", "-s", "-w", "\n%{http_code}", "-X", "POST",
+                     "-H", "Content-Type: application/json",
+                     "-d", payload,
+                     "http://businessservice.default.svc.cluster.local:8092/v1/admin/updateBusinessMappingCode"],
+                    timeout=30,
+                )
+                lines = result.strip().rsplit("\n", 1)
+                status_code = int(lines[-1]) if len(lines) > 1 and lines[-1].isdigit() else 0
+                if 200 <= status_code < 300:
+                    successful.append({"partnerName": partner_name, "apCode": ap_code, "businessId": business_id})
+                else:
+                    response_body = lines[0] if len(lines) > 1 else result
+                    failed.append({"partnerName": partner_name, "apCode": ap_code, "error": response_body[:200]})
+            except Exception as e:
+                failed.append({"partnerName": partner_name, "apCode": ap_code, "error": str(e)})
+
+        # Cleanup temp file
+        import os
+        os.unlink(tmp_path)
+
+    except Exception as e:
+        logger.error("Bulk AP code upload failed: %s", e)
+        failed.append({"partnerName": "System", "error": str(e)})
+
+    return {"successful": successful, "unmatched": unmatched, "failed": failed}
 
 
 # --- Static files (dashboard) ---
