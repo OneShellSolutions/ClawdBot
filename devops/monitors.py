@@ -13,6 +13,7 @@ from devops import k8s_client, mongodb_client, nats_client
 from devops.models import (
     ClusterOverview, HealthStatus, ServiceHealth, MongoHealth,
     ConnectionInfo, NatsHealth, StreamInfo, ConsumerInfo, AnalysisResult,
+    KafkaConsumerLagHealth, KafkaConsumerGroup,
 )
 from devops.event_bus import event_bus
 from devops.topology import SERVICE_TOPOLOGY
@@ -27,6 +28,7 @@ POD_RESTART_THRESHOLD = 5
 MONGODB_CONNECTION_WARNING = 400
 MONGODB_CONNECTION_CRITICAL = 800
 NATS_CONSUMER_LAG_THRESHOLD = 500
+KAFKA_CONSUMER_LAG_THRESHOLD = 100
 
 # External service URLs (not in-cluster, checked via HTTPS)
 EXTERNAL_SERVICE_URLS = {
@@ -352,6 +354,124 @@ class NATSMonitor(BaseMonitor):
         }
 
 
+KAFKA_CONSUMER_GROUPS = [
+    "mongo-event-listener",
+    "mongo-event-listener-sync-rules",
+]
+
+
+class KafkaConsumerLagMonitor(BaseMonitor):
+    """Monitors Kafka (Redpanda) consumer group lag via rpk group describe."""
+
+    def __init__(self):
+        super().__init__("kafka_consumer_lag")
+        self.health = KafkaConsumerLagHealth()
+
+    async def check(self) -> dict:
+        groups = []
+        total_lag = 0
+
+        for group_name in KAFKA_CONSUMER_GROUPS:
+            group_data = await self._describe_group(group_name)
+            groups.append(group_data)
+            total_lag += group_data.total_lag
+
+            if group_data.total_lag > KAFKA_CONSUMER_LAG_THRESHOLD:
+                event_bus.emit_nowait(
+                    "kafka_consumer_lag",
+                    consumer_group=group_name,
+                    lag=group_data.total_lag,
+                    state=group_data.state,
+                )
+
+        self.health.consumer_groups = groups
+        self.health.total_lag = total_lag
+        self.health.status = (
+            HealthStatus.CRITICAL if total_lag > KAFKA_CONSUMER_LAG_THRESHOLD * 5
+            else HealthStatus.DEGRADED if total_lag > KAFKA_CONSUMER_LAG_THRESHOLD
+            else HealthStatus.HEALTHY
+        )
+        self.health.error = None
+        self.health.last_checked = datetime.utcnow()
+
+        return {
+            "status": self.health.status.value,
+            "total_lag": total_lag,
+            "groups": len(groups),
+        }
+
+    async def _describe_group(self, group_name: str) -> KafkaConsumerGroup:
+        """Parse rpk group describe text output.
+
+        Format:
+            GROUP        <name>
+            COORDINATOR  0
+            STATE        Stable
+            TOTAL-LAG    123
+
+            TOPIC          PARTITION  CURRENT-OFFSET  LOG-START-OFFSET  LOG-END-OFFSET  LAG  ...
+            topic.name     0          100             0                 110             10   ...
+        """
+        try:
+            raw = await k8s_client.exec_in_pod(
+                "redpanda-0", "kafka",
+                ["rpk", "group", "describe", group_name],
+                timeout=10,
+            )
+            if not raw:
+                return KafkaConsumerGroup(group=group_name, state="UNKNOWN", total_lag=0)
+
+            state = "UNKNOWN"
+            total_lag = 0
+            topics = []
+            in_table = False
+
+            for line in raw.strip().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+
+                if line.startswith("STATE"):
+                    state = line.split(None, 1)[1].strip() if len(line.split(None, 1)) > 1 else "UNKNOWN"
+                elif line.startswith("TOTAL-LAG"):
+                    try:
+                        total_lag = int(line.split(None, 1)[1].strip())
+                    except (ValueError, IndexError):
+                        pass
+                elif line.startswith("TOPIC") and "PARTITION" in line:
+                    in_table = True
+                    continue
+                elif in_table:
+                    parts = line.split()
+                    if len(parts) >= 6:
+                        try:
+                            topic_name = parts[0]
+                            partition = int(parts[1])
+                            current_offset = int(parts[2])
+                            log_end_offset = int(parts[4])
+                            lag = int(parts[5])
+                            if lag > 0:
+                                topics.append({
+                                    "topic": topic_name,
+                                    "partition": partition,
+                                    "lag": lag,
+                                    "current_offset": current_offset,
+                                    "log_end_offset": log_end_offset,
+                                })
+                        except (ValueError, IndexError):
+                            pass
+
+            return KafkaConsumerGroup(
+                group=group_name,
+                state=state,
+                total_lag=total_lag,
+                topics=topics,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to describe Kafka consumer group {group_name}: {e}")
+            return KafkaConsumerGroup(group=group_name, state="ERROR", total_lag=0)
+
+
 AUTO_SCAN_SERVICES = {
     "posserverbackend": {"ns": "default", "tail": 500},
     "posclientbackend": {"ns": "pos", "tail": 300},
@@ -516,5 +636,6 @@ kubernetes_monitor = KubernetesMonitor()
 service_health_monitor = ServiceHealthMonitor()
 mongodb_monitor = MongoDBMonitor()
 nats_monitor = NATSMonitor()
+kafka_consumer_lag_monitor = KafkaConsumerLagMonitor()
 log_analyzer_monitor = LogAnalyzerMonitor()
 issue_finder = IssueFinder()

@@ -163,6 +163,21 @@ class ConsumerInfo(BaseModel):
     num_redelivered: int = 0
 
 
+class KafkaConsumerGroup(BaseModel):
+    group: str
+    state: str = ""
+    total_lag: int = 0
+    topics: list[dict] = Field(default_factory=list)
+
+
+class KafkaConsumerLagHealth(BaseModel):
+    status: HealthStatus = HealthStatus.UNKNOWN
+    consumer_groups: list[KafkaConsumerGroup] = Field(default_factory=list)
+    total_lag: int = 0
+    error: str | None = None
+    last_checked: datetime = Field(default_factory=datetime.utcnow)
+
+
 class NatsHealth(BaseModel):
     status: HealthStatus = HealthStatus.UNKNOWN
     server_id: str = ""

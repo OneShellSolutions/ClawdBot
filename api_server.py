@@ -1537,6 +1537,21 @@ async def debezium_detail():
     return result
 
 
+@app.get("/api/v1/redpanda/consumer-lag", dependencies=[Depends(verify_api_key)])
+async def kafka_consumer_lag():
+    """Get Kafka consumer group lag for all monitored consumer groups."""
+    from devops.monitors import kafka_consumer_lag_monitor
+    result = await kafka_consumer_lag_monitor.safe_check()
+    health = kafka_consumer_lag_monitor.health
+    return {
+        "status": health.status.value,
+        "total_lag": health.total_lag,
+        "consumer_groups": [g.model_dump() for g in health.consumer_groups],
+        "last_checked": health.last_checked.isoformat() if health.last_checked else None,
+        "error": health.error,
+    }
+
+
 @app.post("/api/v1/redpanda/debezium/{connector}/restart", dependencies=[Depends(verify_api_key)])
 async def restart_debezium(connector: str):
     from devops import k8s_client

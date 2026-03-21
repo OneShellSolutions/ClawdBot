@@ -9,6 +9,7 @@ from devops.monitors import (
     service_health_monitor,
     mongodb_monitor,
     nats_monitor,
+    kafka_consumer_lag_monitor,
     log_analyzer_monitor,
     issue_finder,
 )
@@ -41,6 +42,11 @@ def setup_scheduler():
         max_instances=1, replace_existing=True,
     )
     scheduler.add_job(
+        kafka_consumer_lag_monitor.safe_check,
+        "interval", seconds=60, id="kafka_consumer_lag_monitor",
+        max_instances=1, replace_existing=True,
+    )
+    scheduler.add_job(
         log_analyzer_monitor.safe_check,
         "interval", seconds=300, id="log_analyzer_monitor",
         max_instances=1, replace_existing=True,
@@ -52,7 +58,7 @@ def setup_scheduler():
     )
 
     scheduler.start()
-    logger.info("DevOps scheduler started with 6 monitors")
+    logger.info("DevOps scheduler started with 7 monitors")
 
 
 def stop_scheduler():
