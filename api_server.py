@@ -2036,29 +2036,17 @@ async def _notify_telegram(ticket: dict):
 # --- Admin Tasks ---
 
 ONESHELL_API_BASE = os.getenv("ONESHELL_API_BASE", "https://api.oneshell.in")
-MONGODBSERVICE_URL = os.getenv("MONGODBSERVICE_URL", "http://mongodbservice.default.svc.cluster.local:8080")
 
 
 @app.get("/api/v1/admin/search-businesses", dependencies=[Depends(verify_api_key)])
 async def admin_search_businesses(q: str = ""):
-    """Search businesses by name for autocomplete."""
+    """Search businesses by name for autocomplete via mongosh."""
     if len(q.strip()) < 2:
         return {"businesses": []}
     try:
-        import httpx
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                f"{MONGODBSERVICE_URL}/v1/core/db/business-profile/get",
-                json={"keyword": q.strip(), "pageSize": 10, "pageNumber": 1},
-            )
-        if resp.status_code == 200:
-            data = resp.json()
-            businesses = data if isinstance(data, list) else data.get("data", [])
-            return {"businesses": [
-                {"businessId": b.get("businessId", ""), "businessName": b.get("businessName", ""), "businessCity": b.get("businessCity", "")}
-                for b in businesses
-            ]}
-        return {"businesses": [], "error": f"MongoDbService returned {resp.status_code}"}
+        from devops.mongodb_client import search_businesses
+        results = await search_businesses(q.strip(), limit=10)
+        return {"businesses": results}
     except Exception as e:
         logger.error("Business search failed: %s", e)
         return {"businesses": [], "error": str(e)}
