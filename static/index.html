@@ -1172,6 +1172,44 @@
                     </div>
                 </template>
             </div>
+            <div class="section" style="margin-top:16px; padding:16px; border-left:4px solid;"
+                 :style="'border-color:' + (consumerLagData.total_lag > 500 ? 'var(--critical)' : consumerLagData.total_lag > 100 ? 'var(--warning)' : 'var(--healthy)')">
+                <div style="display:flex; align-items:center; gap:16px; margin-bottom:12px;">
+                    <h3 style="margin:0;">Consumer Group Lag</h3>
+                    <span class="status-badge"
+                          :class="consumerLagData.status === 'healthy' ? 'healthy' : consumerLagData.status === 'degraded' ? 'warning' : consumerLagData.status === 'critical' ? 'critical' : ''"
+                          x-text="'Total Lag: ' + (consumerLagData.total_lag || 0)"></span>
+                </div>
+                <template x-for="g in (consumerLagData.consumer_groups || [])">
+                    <div style="margin-bottom:12px; padding:10px; background:var(--bg); border:1px solid var(--border); border-radius:6px;">
+                        <div style="display:flex; align-items:center; gap:12px; margin-bottom:6px;">
+                            <span style="font-family:monospace; font-size:13px; font-weight:600;" x-text="g.group"></span>
+                            <span class="status-badge" :class="g.total_lag === 0 ? 'healthy' : g.total_lag > 100 ? 'critical' : 'warning'"
+                                  x-text="'Lag: ' + g.total_lag"></span>
+                            <span style="font-size:11px; color:var(--text-dim);" x-text="'State: ' + g.state"></span>
+                        </div>
+                        <template x-if="g.topics && g.topics.length > 0">
+                            <table style="width:100%; font-size:11px;">
+                                <thead><tr><th style="text-align:left;">Topic</th><th>Partition</th><th>Current</th><th>End</th><th>Lag</th></tr></thead>
+                                <tbody>
+                                    <template x-for="t in g.topics">
+                                        <tr>
+                                            <td style="font-family:monospace;" x-text="t.topic"></td>
+                                            <td style="text-align:center;" x-text="t.partition"></td>
+                                            <td style="text-align:center;" x-text="t.current_offset"></td>
+                                            <td style="text-align:center;" x-text="t.log_end_offset"></td>
+                                            <td style="text-align:center; font-weight:600;"
+                                                :style="'color:' + (t.lag > 100 ? 'var(--critical)' : t.lag > 0 ? 'var(--warning)' : 'var(--healthy)')"
+                                                x-text="t.lag"></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </template>
+                        <div x-show="!g.topics || g.topics.length === 0" style="font-size:11px; color:var(--text-dim);">No lagging topics</div>
+                    </div>
+                </template>
+            </div>
         </div>
 
         <!-- ============ DRAGONFLY TAB ============ -->

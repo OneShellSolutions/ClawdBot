@@ -32,6 +32,7 @@ document.addEventListener('alpine:init', () => {
         // Redpanda + Debezium
         redpandaData: {},
         debeziumDetail: {},
+        consumerLagData: { status: 'unknown', total_lag: 0, consumer_groups: [] },
 
         // Dragonfly
         dragonflyData: {},
@@ -489,10 +490,11 @@ document.addEventListener('alpine:init', () => {
         },
 
         async loadRedpanda() {
-            const [health, debezium, detail] = await Promise.all([
+            const [health, debezium, detail, lag] = await Promise.all([
                 this.api('/api/v1/redpanda/health'),
                 this.api('/api/v1/redpanda/debezium'),
                 this.api('/api/v1/redpanda/debezium/detail'),
+                this.api('/api/v1/redpanda/consumer-lag'),
             ]);
             this.redpandaData = {
                 broker: health || {},
@@ -500,6 +502,7 @@ document.addEventListener('alpine:init', () => {
                 debezium_failed: debezium?.connectors?.reduce((sum, c) => sum + (c.failed_tasks || 0), 0) || 0,
             };
             if (detail) this.debeziumDetail = detail;
+            if (lag) this.consumerLagData = lag;
         },
 
         async restartDebezium(connector) {
