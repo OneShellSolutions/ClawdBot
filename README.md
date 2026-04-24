@@ -2,6 +2,36 @@
 
 A Telegram bot that wraps [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (Max subscription OAuth) into a personal AI assistant with an integrated DevOps monitoring dashboard. Send a message in Telegram and Claude reads files, edits code, runs shell commands, queries databases, and manages Kubernetes clusters on your behalf.
 
+## Overview
+
+ClawdBot is a Telegram bot that wraps Claude Code CLI into a personal AI assistant with an integrated DevOps monitoring dashboard. It enables users to send messages via Telegram and have Claude read files, edit code, run shell commands, query databases, and manage Kubernetes clusters.
+
+## Stack
+
+- **Python 3** (3.11+)
+- **FastAPI** (port :8000) — API server for the DevOps dashboard
+- **python-telegram-bot** — Telegram bot framework
+- **Claude Agent SDK** — Multi-agent orchestration with 5 specialized sub-agents
+- **APScheduler** — Background task scheduling for monitors
+- **uvicorn** — ASGI server for FastAPI
+- **requirements.txt** — Python dependencies
+
+## Run
+
+### Local Development
+
+```bash
+git clone https://github.com/OneShellSolutions/ClawdBot.git
+cd ClawdBot
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.template .env.local
+ENV_FILE=.env.local ./venv/bin/python bot.py
+```
+
+Note: No Dockerfile exists in this repository. For deployment, use `./deploy.sh` which handles scp and systemd configuration.
+
 ## Architecture
 
 ```
@@ -217,6 +247,17 @@ ClawdBot/
 ├── .env.template
 └── CLAUDE.md               # System prompt for Claude
 ```
+
+## Contributing
+
+Contributions are welcome! Please ensure:
+- All new features include appropriate tests
+- Code follows the existing style and conventions
+- Documentation is updated for any API changes
+
+## License
+
+This project is licensed under the MIT License. See the LICENSE file for details.
 
 ## Session Continuity
 
