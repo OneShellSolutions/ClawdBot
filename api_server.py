@@ -2074,6 +2074,19 @@ async def admin_search_businesses(q: str = ""):
         return {"businesses": [], "error": str(e)}
 
 
+@app.post("/api/v1/admin/refresh-business-cache", dependencies=[Depends(verify_api_key)])
+async def admin_refresh_business_cache():
+    """Force-refresh the cached businessProfile snapshot."""
+    try:
+        from devops.mongodb_client import _refresh_business_cache, _business_cache
+        await _refresh_business_cache()
+        from devops import mongodb_client as _m
+        return {"success": True, "count": len(_m._business_cache or [])}
+    except Exception as e:
+        logger.error("Business cache refresh failed: %s", e)
+        return {"success": False, "error": str(e)}
+
+
 @app.post("/api/v1/admin/copy-categories", dependencies=[Depends(verify_api_key)])
 async def admin_copy_categories(request: Request):
     """Copy categories to a destination business via internal K8s service."""

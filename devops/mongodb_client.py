@@ -16,7 +16,7 @@ ADMIN_URI = "mongodb://clusterAdmin:tb3GSgY6U5ZSc7CNsvf6@localhost:27017/admin?a
 APP_URI = "mongodb://databaseAdmin:akyFqNelEclMhlkNx06c@localhost:27017/oneshell?authSource=admin"
 
 # In-process cache for businessProfile (1.7K docs, full collection fits trivially)
-_BUSINESS_CACHE_TTL = 300  # seconds
+_BUSINESS_CACHE_TTL = 60  # seconds — short TTL so newly created businesses appear quickly
 _business_cache: list[dict] | None = None
 _business_cache_ts: float = 0.0
 _business_cache_lock = asyncio.Lock()
@@ -144,18 +144,29 @@ async def _refresh_business_cache() -> None:
             logger.error("businessProfile cache refresh failed: %s", e)
 
 
-async def search_businesses(keyword: str, limit: int = 10) -> list:
-    """Search businessProfile by name (case-insensitive substring match) using in-memory cache."""
-    kw = (keyword or "").strip().lower()
-    if not kw:
-        return []
-    cache = await _ensure_business_cache()
+def _filter_cache(cache: list[dict], kw: str, limit: int) -> list[dict]:
     matches: list[dict] = []
     for b in cache:
         if kw in b["_nameLower"]:
             matches.append({"businessId": b["businessId"], "businessName": b["businessName"], "businessCity": b["businessCity"]})
             if len(matches) >= limit:
                 break
+    return matches
+
+
+async def search_businesses(keyword: str, limit: int = 10) -> list:
+    """Search businessProfile by name (case-insensitive substring match) using in-memory cache."""
+    kw = (keyword or "").strip().lower()
+    if not kw:
+        return []
+    cache = await _ensure_business_cache()
+    matches = _filter_cache(cache, kw, limit)
+    # Zero-hit fallback: a brand-new business may not be in the cached snapshot yet.
+    # Force a refresh and re-filter once before giving up.
+    if not matches:
+        await _refresh_business_cache()
+        if _business_cache:
+            matches = _filter_cache(_business_cache, kw, limit)
     return matches
 
 
