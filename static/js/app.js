@@ -930,10 +930,17 @@ document.addEventListener('alpine:init', () => {
         },
 
         // ---- Admin Tasks ----
+        _adminSearchSeq: 0,
+        _adminSourceSearchSeq: 0,
+
         async searchBusinesses() {
             const q = this.adminSearch.trim();
-            if (q.length < 2) { this.adminSearchResults = []; this.adminDropdownOpen = false; return; }
+            const seq = ++this._adminSearchSeq;
+            this.adminSearchResults = [];
+            this.adminDropdownOpen = false;
+            if (q.length < 2) return;
             const data = await this.api(`/api/v1/admin/search-businesses?q=${encodeURIComponent(q)}`);
+            if (seq !== this._adminSearchSeq) return; // stale response, newer request in flight
             this.adminSearchResults = data?.businesses || [];
             this.adminDropdownOpen = this.adminSearchResults.length > 0;
         },
@@ -954,8 +961,12 @@ document.addEventListener('alpine:init', () => {
 
         async searchSourceBusinesses() {
             const q = this.adminSourceSearch.trim();
-            if (q.length < 2) { this.adminSourceSearchResults = []; this.adminSourceDropdownOpen = false; return; }
+            const seq = ++this._adminSourceSearchSeq;
+            this.adminSourceSearchResults = [];
+            this.adminSourceDropdownOpen = false;
+            if (q.length < 2) return;
             const data = await this.api(`/api/v1/admin/search-businesses?q=${encodeURIComponent(q)}`);
+            if (seq !== this._adminSourceSearchSeq) return; // stale response, newer request in flight
             this.adminSourceSearchResults = data?.businesses || [];
             this.adminSourceDropdownOpen = this.adminSourceSearchResults.length > 0;
         },
