@@ -88,6 +88,16 @@ async def _on_startup():
     # lm_start_auto_scan(dispatch_fn=None, interval_seconds=300)
     logger.info("Log monitor ready (manual scan mode)")
 
+    # Warm businessProfile cache so first /admin/search-businesses is instant
+    async def _prime_business_cache():
+        try:
+            from devops.mongodb_client import _ensure_business_cache
+            await _ensure_business_cache(force=True)
+            logger.info("businessProfile cache primed")
+        except Exception as e:
+            logger.warning("businessProfile cache prime failed: %s", e)
+    asyncio.create_task(_prime_business_cache())
+
 
 # --- Auth ---
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 
 from devops import k8s_client
 
@@ -13,6 +14,13 @@ MONGOS_POD = "prod-cluster-mongos-0"
 MONGO_NS = "mongodb"
 ADMIN_URI = "mongodb://clusterAdmin:tb3GSgY6U5ZSc7CNsvf6@localhost:27017/admin?authSource=admin"
 APP_URI = "mongodb://databaseAdmin:akyFqNelEclMhlkNx06c@localhost:27017/oneshell?authSource=admin"
+
+# In-process cache for businessProfile (1.7K docs, full collection fits trivially)
+_BUSINESS_CACHE_TTL = 300  # seconds
+_business_cache: list[dict] | None = None
+_business_cache_ts: float = 0.0
+_business_cache_lock = asyncio.Lock()
+_business_cache_refresh_task: asyncio.Task | None = None
 
 
 async def _mongosh(eval_cmd: str, uri: str | None = None) -> str:
@@ -82,17 +90,76 @@ async def get_sync_error_summary() -> list:
     return result if isinstance(result, list) else []
 
 
-async def search_businesses(keyword: str, limit: int = 10) -> list:
-    """Search businessProfile by name (case-insensitive substring match)."""
-    safe_kw = keyword.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
-    # Escape regex metacharacters so user input matches literally
-    for ch in r".^$*+?()[]{}|":
-        safe_kw = safe_kw.replace(ch, "\\" + ch)
+async def _load_business_cache() -> list[dict]:
+    """Pull all businessProfile rows in one mongosh call."""
     result = await _mongosh_json(
-        f'JSON.stringify(db.businessProfile.find('
-        f'{{"businessName": {{$regex: "{safe_kw}", $options: "i"}}}}'
-        f', {{businessName: 1, businessCity: 1}})'
-        f'.limit({limit}).toArray().map(function(b){{ return {{businessId: b._id, businessName: b.businessName, businessCity: b.businessCity}}; }}))',
+        'JSON.stringify(db.businessProfile.find({}, {businessName: 1, businessCity: 1})'
+        '.toArray().map(function(b){ return {businessId: b._id, businessName: b.businessName || "", businessCity: b.businessCity || ""}; }))',
         uri=APP_URI,
     )
-    return result if isinstance(result, list) else []
+    if not isinstance(result, list):
+        return []
+    # Pre-compute lowercase form for fast filtering
+    for b in result:
+        b["_nameLower"] = (b.get("businessName") or "").lower()
+    return result
+
+
+async def _ensure_business_cache(force: bool = False) -> list[dict]:
+    global _business_cache, _business_cache_ts, _business_cache_refresh_task
+    now = time.monotonic()
+    fresh = _business_cache is not None and (now - _business_cache_ts) < _BUSINESS_CACHE_TTL
+    if fresh and not force:
+        return _business_cache  # type: ignore[return-value]
+
+    if _business_cache is not None and not force:
+        # Stale-while-revalidate: serve current cache, refresh in background once
+        if _business_cache_refresh_task is None or _business_cache_refresh_task.done():
+            _business_cache_refresh_task = asyncio.create_task(_refresh_business_cache())
+        return _business_cache
+
+    # Cold path: nothing cached yet, must wait
+    async with _business_cache_lock:
+        if _business_cache is not None and (time.monotonic() - _business_cache_ts) < _BUSINESS_CACHE_TTL and not force:
+            return _business_cache
+        try:
+            data = await _load_business_cache()
+            if data:
+                _business_cache = data
+                _business_cache_ts = time.monotonic()
+        except Exception as e:
+            logger.error("businessProfile cache load failed: %s", e)
+        return _business_cache or []
+
+
+async def _refresh_business_cache() -> None:
+    global _business_cache, _business_cache_ts
+    async with _business_cache_lock:
+        try:
+            data = await _load_business_cache()
+            if data:
+                _business_cache = data
+                _business_cache_ts = time.monotonic()
+        except Exception as e:
+            logger.error("businessProfile cache refresh failed: %s", e)
+
+
+async def search_businesses(keyword: str, limit: int = 10) -> list:
+    """Search businessProfile by name (case-insensitive substring match) using in-memory cache."""
+    kw = (keyword or "").strip().lower()
+    if not kw:
+        return []
+    cache = await _ensure_business_cache()
+    matches: list[dict] = []
+    for b in cache:
+        if kw in b["_nameLower"]:
+            matches.append({"businessId": b["businessId"], "businessName": b["businessName"], "businessCity": b["businessCity"]})
+            if len(matches) >= limit:
+                break
+    return matches
+
+
+async def invalidate_business_cache() -> None:
+    """Force the next search to refresh the cache."""
+    global _business_cache_ts
+    _business_cache_ts = 0.0
