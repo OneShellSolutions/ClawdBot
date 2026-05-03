@@ -1567,7 +1567,7 @@
                                 @focus="adminSourceDropdownOpen = adminSourceSearchResults.length > 0"
                                 @click.away="adminSourceDropdownOpen = false">
                             <div x-show="adminSourceDropdownOpen && adminSourceSearchResults.length > 0" x-transition
-                                style="position:absolute; top:100%; left:0; right:0; background:var(--card-bg); border:1px solid var(--border); border-radius:6px; margin-top:4px; max-height:200px; overflow-y:auto; z-index:10; box-shadow:0 4px 12px rgba(0,0,0,0.3);">
+                                style="position:absolute; top:100%; left:0; right:0; background:var(--surface); border:1px solid var(--border-light); border-radius:6px; margin-top:4px; max-height:240px; overflow-y:auto; z-index:1000; box-shadow:var(--shadow-lg);">
                                 <template x-for="b in adminSourceSearchResults" :key="b.businessId">
                                     <div @click="selectSourceBusiness(b)" style="padding:8px 12px; cursor:pointer; border-bottom:1px solid var(--border); font-size:13px; transition:background 0.15s;"
                                          @mouseover="$el.style.background='var(--bg)'" @mouseout="$el.style.background='transparent'">
@@ -1597,7 +1597,7 @@
                                 @focus="adminDropdownOpen = adminSearchResults.length > 0"
                                 @click.away="adminDropdownOpen = false">
                             <div x-show="adminDropdownOpen && adminSearchResults.length > 0" x-transition
-                                style="position:absolute; top:100%; left:0; right:0; background:var(--card-bg); border:1px solid var(--border); border-radius:6px; margin-top:4px; max-height:200px; overflow-y:auto; z-index:10; box-shadow:0 4px 12px rgba(0,0,0,0.3);">
+                                style="position:absolute; top:100%; left:0; right:0; background:var(--surface); border:1px solid var(--border-light); border-radius:6px; margin-top:4px; max-height:240px; overflow-y:auto; z-index:1000; box-shadow:var(--shadow-lg);">
                                 <template x-for="b in adminSearchResults" :key="b.businessId">
                                     <div @click="selectAdminBusiness(b)" style="padding:8px 12px; cursor:pointer; border-bottom:1px solid var(--border); font-size:13px; transition:background 0.15s;"
                                          @mouseover="$el.style.background='var(--bg)'" @mouseout="$el.style.background='transparent'">
@@ -1645,7 +1645,7 @@
                                 @focus="apDropdownOpen = apSearchResults.length > 0"
                                 @click.away="apDropdownOpen = false">
                             <div x-show="apDropdownOpen && apSearchResults.length > 0" x-transition
-                                style="position:absolute; top:100%; left:0; right:0; background:var(--card-bg); border:1px solid var(--border); border-radius:6px; margin-top:4px; max-height:200px; overflow-y:auto; z-index:10; box-shadow:0 4px 12px rgba(0,0,0,0.3);">
+                                style="position:absolute; top:100%; left:0; right:0; background:var(--surface); border:1px solid var(--border-light); border-radius:6px; margin-top:4px; max-height:240px; overflow-y:auto; z-index:1000; box-shadow:var(--shadow-lg);">
                                 <template x-for="b in apSearchResults" :key="b.businessId">
                                     <div @click="selectApBusiness(b)" style="padding:8px 12px; cursor:pointer; border-bottom:1px solid var(--border); font-size:13px; transition:background 0.15s;"
                                          @mouseover="$el.style.background='var(--bg)'" @mouseout="$el.style.background='transparent'">
@@ -1812,6 +1812,6 @@
     <script src="/static/js/websocket.js"></script>
     <script src="/static/js/charts.js"></script>
     <script src="/static/js/topology.js?v=4"></script>
-    <script src="/static/js/app.js?v=8"></script>
+    <script src="/static/js/app.js?v=9"></script>
 </body>
 </html>
