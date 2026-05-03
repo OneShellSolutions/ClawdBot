@@ -2070,11 +2070,15 @@ async def admin_copy_categories(request: Request):
     body = await request.json()
     business_id = body.get("businessId")
     business_city = body.get("businessCity")
+    source_business_id = (body.get("sourceBusinessId") or "").strip() or None
     if not business_id or not business_city:
         raise HTTPException(400, "businessId and businessCity are required")
     try:
         from devops import k8s_client
-        payload = json.dumps({"businessCity": business_city, "businessId": business_id})
+        payload_obj = {"businessCity": business_city, "businessId": business_id}
+        if source_business_id:
+            payload_obj["sourceBusinessId"] = source_business_id
+        payload = json.dumps(payload_obj)
         result = await k8s_client.exec_in_pod(
             "prod-cluster-mongos-0", "mongodb",
             ["curl", "-s", "-w", "\n%{http_code}", "-X", "POST",

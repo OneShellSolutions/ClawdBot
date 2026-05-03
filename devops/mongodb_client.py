@@ -83,11 +83,14 @@ async def get_sync_error_summary() -> list:
 
 
 async def search_businesses(keyword: str, limit: int = 10) -> list:
-    """Search businessProfile by name (case-insensitive prefix match)."""
+    """Search businessProfile by name (case-insensitive substring match)."""
     safe_kw = keyword.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
+    # Escape regex metacharacters so user input matches literally
+    for ch in r".^$*+?()[]{}|":
+        safe_kw = safe_kw.replace(ch, "\\" + ch)
     result = await _mongosh_json(
         f'JSON.stringify(db.businessProfile.find('
-        f'{{"businessName": {{$regex: "^{safe_kw}", $options: "i"}}}}'
+        f'{{"businessName": {{$regex: "{safe_kw}", $options: "i"}}}}'
         f', {{businessName: 1, businessCity: 1}})'
         f'.limit({limit}).toArray().map(function(b){{ return {{businessId: b._id, businessName: b.businessName, businessCity: b.businessCity}}; }}))',
         uri=APP_URI,

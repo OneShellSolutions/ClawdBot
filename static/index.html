@@ -1190,23 +1190,23 @@
                         </div>
                         <template x-if="g.topics && g.topics.length > 0">
                             <table style="width:100%; font-size:11px;">
-                                <thead><tr><th style="text-align:left;">Topic</th><th>Partition</th><th>Current</th><th>End</th><th>Lag</th></tr></thead>
+                                <thead><tr><th style="text-align:left;">Topic</th><th>Partition</th><th>Current Offset</th><th>End Offset</th><th>Lag</th></tr></thead>
                                 <tbody>
                                     <template x-for="t in g.topics">
                                         <tr>
                                             <td style="font-family:monospace;" x-text="t.topic"></td>
                                             <td style="text-align:center;" x-text="t.partition"></td>
-                                            <td style="text-align:center;" x-text="t.current_offset"></td>
-                                            <td style="text-align:center;" x-text="t.log_end_offset"></td>
+                                            <td style="text-align:center;" x-text="t.current_offset?.toLocaleString()"></td>
+                                            <td style="text-align:center;" x-text="t.log_end_offset?.toLocaleString()"></td>
                                             <td style="text-align:center; font-weight:600;"
                                                 :style="'color:' + (t.lag > 100 ? 'var(--critical)' : t.lag > 0 ? 'var(--warning)' : 'var(--healthy)')"
-                                                x-text="t.lag"></td>
+                                                x-text="t.lag?.toLocaleString()"></td>
                                         </tr>
                                     </template>
                                 </tbody>
                             </table>
                         </template>
-                        <div x-show="!g.topics || g.topics.length === 0" style="font-size:11px; color:var(--text-dim);">No lagging topics</div>
+                        <div x-show="!g.topics || g.topics.length === 0" style="font-size:11px; color:var(--text-dim);">No data available</div>
                     </div>
                 </template>
             </div>
@@ -1558,9 +1558,39 @@
             <div class="card" style="margin-bottom:20px;">
                 <div class="card-header"><h3>Copy Categories</h3></div>
                 <div class="card-body">
-                    <p style="color:var(--text-dim); margin-bottom:16px; font-size:13px;">Copy store categories from the source business to a destination business.</p>
+                    <p style="color:var(--text-dim); margin-bottom:16px; font-size:13px;">Copy store categories from the source business to a destination business. Leave source blank to use the default template business.</p>
                     <div style="max-width:480px;">
-                        <label style="display:block; font-weight:600; margin-bottom:6px; font-size:13px;">Destination Business Name</label>
+                        <label style="display:block; font-weight:600; margin-bottom:6px; font-size:13px;">Source Business Name <span style="color:var(--text-dim); font-weight:400;">(optional)</span></label>
+                        <div style="position:relative;">
+                            <input type="text" x-model="adminSourceSearch" @input.debounce.300ms="searchSourceBusinesses()" placeholder="Type source business name (blank = default template)..."
+                                style="width:100%; padding:8px 12px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px; outline:none;"
+                                @focus="adminSourceDropdownOpen = adminSourceSearchResults.length > 0"
+                                @click.away="adminSourceDropdownOpen = false">
+                            <div x-show="adminSourceDropdownOpen && adminSourceSearchResults.length > 0" x-transition
+                                style="position:absolute; top:100%; left:0; right:0; background:var(--card-bg); border:1px solid var(--border); border-radius:6px; margin-top:4px; max-height:200px; overflow-y:auto; z-index:10; box-shadow:0 4px 12px rgba(0,0,0,0.3);">
+                                <template x-for="b in adminSourceSearchResults" :key="b.businessId">
+                                    <div @click="selectSourceBusiness(b)" style="padding:8px 12px; cursor:pointer; border-bottom:1px solid var(--border); font-size:13px; transition:background 0.15s;"
+                                         @mouseover="$el.style.background='var(--bg)'" @mouseout="$el.style.background='transparent'">
+                                        <div style="font-weight:600;" x-text="b.businessName"></div>
+                                        <div style="color:var(--text-dim); font-size:11px;" x-text="(b.businessCity || '') + ' · ' + b.businessId"></div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <div x-show="adminSourceBusiness" x-transition style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:12px; margin-top:12px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                                <span style="font-weight:600; font-size:13px;">Source Business</span>
+                                <button @click="clearSourceBusiness()" style="background:none; border:none; color:var(--danger); cursor:pointer; font-size:12px;">Clear</button>
+                            </div>
+                            <div style="font-size:13px; color:var(--text-dim); line-height:1.8;">
+                                <div><strong>Name:</strong> <span x-text="adminSourceBusiness?.businessName || '-'"></span></div>
+                                <div><strong>Business ID:</strong> <span x-text="adminSourceBusiness?.businessId || '-'"></span></div>
+                                <div><strong>City:</strong> <span x-text="adminSourceBusiness?.businessCity || '-'"></span></div>
+                            </div>
+                        </div>
+
+                        <label style="display:block; font-weight:600; margin:18px 0 6px; font-size:13px;">Destination Business Name</label>
                         <div style="position:relative;">
                             <input type="text" x-model="adminSearch" @input.debounce.300ms="searchBusinesses()" placeholder="Type business name to search..."
                                 style="width:100%; padding:8px 12px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px; outline:none;"
@@ -1580,7 +1610,7 @@
 
                         <div x-show="adminSelectedBusiness" x-transition style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:12px; margin-top:12px;">
                             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                                <span style="font-weight:600; font-size:13px;">Selected Business</span>
+                                <span style="font-weight:600; font-size:13px;">Destination Business</span>
                                 <button @click="clearAdminBusiness()" style="background:none; border:none; color:var(--danger); cursor:pointer; font-size:12px;">Clear</button>
                             </div>
                             <div style="font-size:13px; color:var(--text-dim); line-height:1.8;">
@@ -1782,6 +1812,6 @@
     <script src="/static/js/websocket.js"></script>
     <script src="/static/js/charts.js"></script>
     <script src="/static/js/topology.js?v=4"></script>
-    <script src="/static/js/app.js?v=5"></script>
+    <script src="/static/js/app.js?v=6"></script>
 </body>
 </html>

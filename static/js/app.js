@@ -125,6 +125,10 @@ document.addEventListener('alpine:init', () => {
         adminSearchResults: [],
         adminDropdownOpen: false,
         adminSelectedBusiness: null,
+        adminSourceSearch: '',
+        adminSourceSearchResults: [],
+        adminSourceDropdownOpen: false,
+        adminSourceBusiness: null,
         adminCopyLoading: false,
         adminCopyResult: null,
 
@@ -948,16 +952,42 @@ document.addEventListener('alpine:init', () => {
             this.adminCopyResult = null;
         },
 
+        async searchSourceBusinesses() {
+            const q = this.adminSourceSearch.trim();
+            if (q.length < 2) { this.adminSourceSearchResults = []; this.adminSourceDropdownOpen = false; return; }
+            const data = await this.api(`/api/v1/admin/search-businesses?q=${encodeURIComponent(q)}`);
+            this.adminSourceSearchResults = data?.businesses || [];
+            this.adminSourceDropdownOpen = this.adminSourceSearchResults.length > 0;
+        },
+
+        selectSourceBusiness(b) {
+            this.adminSourceBusiness = b;
+            this.adminSourceSearch = b.businessName || '';
+            this.adminSourceDropdownOpen = false;
+            this.adminCopyResult = null;
+        },
+
+        clearSourceBusiness() {
+            this.adminSourceBusiness = null;
+            this.adminSourceSearch = '';
+            this.adminSourceSearchResults = [];
+            this.adminCopyResult = null;
+        },
+
         async executeCopyCategories() {
             const b = this.adminSelectedBusiness;
             if (!b) return;
-            if (!confirm(`Copy categories to "${b.businessName}" (${b.businessCity})?\n\nBusiness ID: ${b.businessId}`)) return;
+            const src = this.adminSourceBusiness;
+            const srcLabel = src ? `"${src.businessName}" (${src.businessId})` : 'default template';
+            if (!confirm(`Copy categories from ${srcLabel} to "${b.businessName}" (${b.businessCity})?\n\nDestination Business ID: ${b.businessId}`)) return;
             this.adminCopyLoading = true;
             this.adminCopyResult = null;
+            const payload = { businessId: b.businessId, businessCity: b.businessCity };
+            if (src?.businessId) payload.sourceBusinessId = src.businessId;
             const data = await this.api('/api/v1/admin/copy-categories', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ businessId: b.businessId, businessCity: b.businessCity }),
+                body: JSON.stringify(payload),
             });
             this.adminCopyLoading = false;
             if (data?.success) {
